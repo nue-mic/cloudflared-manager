@@ -156,3 +156,59 @@ func TestOnExit(t *testing.T) {
 		t.Errorf("expected daemon entry, got %+v", got)
 	}
 }
+
+// TestWrite_LineSplit verifies that Write correctly buffers partial lines
+// across calls and emits one Entry per complete newline-terminated line.
+func TestWrite_LineSplit(t *testing.T) {
+	p := logtail.NewProcessTailer("inst-write", 100)
+	defer p.Stop()
+
+	// First write: a complete JSON line terminated with \n.
+	_, _ = p.Write([]byte("{\"level\":\"info\",\"message\":\"first\"}\n"))
+	// Second write: another complete JSON line terminated with \n, plus a
+	// partial line without a terminator that must NOT yet appear in the ring.
+	_, _ = p.Write([]byte("{\"level\":\"warn\",\"message\":\"second\"}\n"))
+	_, _ = p.Write([]byte("partial no newline"))
+
+	got := p.Snapshot(logtail.Filter{}, 0)
+	// Both complete lines should be in the ring; the partial write must not.
+	if len(got) != 2 {
+		t.Fatalf("expected 2 entries, got %d: %+v", len(got), got)
+	}
+	if got[0].Source != "stream" {
+		t.Errorf("source[0]=%q want stream", got[0].Source)
+	}
+	if got[0].Level != "info" || got[0].Message != "first" {
+		t.Errorf("entry[0]=%+v", got[0])
+	}
+	if got[1].Level != "warn" || got[1].Message != "second" {
+		t.Errorf("entry[1]=%+v", got[1])
+	}
+
+	// Flush the partial line by appending a newline.
+	_, _ = p.Write([]byte("\n"))
+	got2 := p.Snapshot(logtail.Filter{}, 0)
+	if len(got2) != 3 {
+		t.Fatalf("expected 3 entries after flush, got %d", len(got2))
+	}
+	if got2[2].Raw != "partial no newline" {
+		t.Errorf("flushed entry raw=%q", got2[2].Raw)
+	}
+}
+
+// TestWrite_StoppedNoop verifies that Write on a stopped tailer is a
+// no-op (returns len(b), nil) and does not add entries to the ring.
+func TestWrite_StoppedNoop(t *testing.T) {
+	p := logtail.NewProcessTailer("inst-stopped", 100)
+	p.Stop()
+	n, err := p.Write([]byte("hello\n"))
+	if err != nil {
+		t.Fatalf("Write on stopped tailer: %v", err)
+	}
+	if n != 6 {
+		t.Errorf("n=%d want 6", n)
+	}
+	if got := p.Snapshot(logtail.Filter{}, 0); len(got) != 0 {
+		t.Errorf("stopped tailer should have empty ring, got %d entries", len(got))
+	}
+}

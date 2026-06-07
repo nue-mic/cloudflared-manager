@@ -4,15 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/mia-clark/cloudflared-manager/internal/cfdbin"
 	"github.com/mia-clark/cloudflared-manager/internal/eventbus"
+	"github.com/mia-clark/cloudflared-manager/internal/logtail"
 	"github.com/mia-clark/cloudflared-manager/internal/process"
+	"github.com/mia-clark/cloudflared-manager/pkg/cfdconfig"
+	"github.com/mia-clark/cloudflared-manager/pkg/cfdflags"
 	"github.com/mia-clark/cloudflared-manager/pkg/cfdstate"
 	"github.com/mia-clark/cloudflared-manager/pkg/util"
 )
@@ -38,19 +44,46 @@ type instance struct {
 	bus      *eventbus.Bus
 	logSink  io.Writer
 	binStore *cfdbin.Store // may be nil; start() falls back to PATH "cloudflared"
+
+	// metricsPort is stable for the lifetime of the instance: computed
+	// once from a CRC32 hash of the id so the same id always maps to the
+	// same local port in range [20241, 20998].
+	metricsPort int
+	// tailer captures the child process's combined stdout+stderr output,
+	// parses structured JSON log lines, and fans them out to subscribers.
+	tailer *logtail.ProcessTailer
 }
 
 func newInstance(id, path string, logger *slog.Logger, bus *eventbus.Bus, logSink io.Writer, binStore *cfdbin.Store) *instance {
 	return &instance{
-		id:       id,
-		path:     path,
-		state:    cfdstate.ConfigStateStopped,
-		logger:   logger.With(slog.String("config_id", id)),
-		bus:      bus,
-		logSink:  logSink,
-		binStore: binStore,
+		id:          id,
+		path:        path,
+		state:       cfdstate.ConfigStateStopped,
+		logger:      logger.With(slog.String("config_id", id)),
+		bus:         bus,
+		logSink:     logSink,
+		binStore:    binStore,
+		metricsPort: allocMetricsPort(id),
+		tailer:      logtail.NewProcessTailer(id, 0),
 	}
 }
+
+// allocMetricsPort maps an instance id to a stable local port in the range
+// [20241, 20998] using a CRC32 hash so the same id always resolves to the
+// same port across daemon restarts.
+func allocMetricsPort(id string) int {
+	return int(crc32.ChecksumIEEE([]byte(id)))%758 + 20241
+}
+
+// MetricsAddr returns the "127.0.0.1:<port>" string for this instance's
+// cloudflared --metrics endpoint.
+func (i *instance) MetricsAddr() string {
+	return "127.0.0.1:" + strconv.Itoa(i.metricsPort)
+}
+
+// Tailer exposes the ProcessTailer so the API logs handler can subscribe
+// to live structured log output from the child process.
+func (i *instance) Tailer() *logtail.ProcessTailer { return i.tailer }
 
 // ID returns the immutable config id (file stem).
 func (i *instance) ID() string { return i.id }
@@ -68,8 +101,9 @@ type Snapshot struct {
 	LastError     string     `json:"last_error,omitempty"`
 	StartedAt     *time.Time `json:"started_at,omitempty"`
 	StoppedAt     *time.Time `json:"stopped_at,omitempty"`
-	BinaryVersion string     `json:"binary_version,omitempty"` // 该实例当前使用的 cloudflared 版本，PR-05 起填充
+	BinaryVersion string     `json:"binary_version,omitempty"` // 该实例当前使用的 cloudflared 版本
 	PID           int        `json:"pid,omitempty"`            // 子进程 pid，0 表示未运行
+	MetricsPort   int        `json:"metrics_port,omitempty"`   // 分配给该实例的 metrics 端口
 }
 
 // Snapshot returns a JSON-friendly status view. Name / LogPath are
@@ -78,10 +112,11 @@ func (i *instance) Snapshot() Snapshot {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
 	s := Snapshot{
-		ID:        i.id,
-		Path:      i.path,
-		State:     stateString(i.state),
-		LastError: i.lastErr,
+		ID:          i.id,
+		Path:        i.path,
+		State:       stateString(i.state),
+		LastError:   i.lastErr,
+		MetricsPort: i.metricsPort,
 	}
 	if !i.startAt.IsZero() {
 		t := i.startAt
@@ -129,14 +164,11 @@ func (i *instance) setState(s cfdstate.ConfigState) bool {
 	return true
 }
 
-// start spawns the cloudflared subprocess.
-//
-// PR-04 transitional behaviour: argv is the minimal ["tunnel",
-// "--no-autoupdate", "run"], BinaryPath is "cloudflared" (PATH lookup).
-// No token / TUNNEL_* env is set yet — that lands in PR-08 when the
-// API layer projects TunnelConfigV1 onto cfdflags.Options. In practice
-// this means PR-04 spawns will fail on most hosts (no cloudflared in
-// PATH, or no token → cloudflared exits early). That is expected.
+// start spawns the cloudflared subprocess. It reads the instance's YAML
+// config, validates it, projects the fields onto TUNNEL_* env vars via
+// cfdflags, and injects the mandatory cfdmgrd-owned env last so they
+// always win. The ProcessTailer is wired as an additional log sink so
+// structured log lines are available to the API /logs handler.
 func (i *instance) start(ctx context.Context) error {
 	i.mu.Lock()
 	if i.state == cfdstate.ConfigStateStarted || i.state == cfdstate.ConfigStateStarting {
@@ -147,18 +179,84 @@ func (i *instance) start(ctx context.Context) error {
 	i.lastErr = ""
 	i.mu.Unlock()
 
+	// 1. Read + parse + validate the YAML config.
+	raw, err := os.ReadFile(i.path)
+	if err != nil {
+		i.recordError(err)
+		i.setState(cfdstate.ConfigStateStopped)
+		return err
+	}
+	cfg, err := cfdconfig.ParseYAML(raw)
+	if err != nil {
+		i.recordError(err)
+		i.setState(cfdstate.ConfigStateStopped)
+		return err
+	}
+	if err := cfg.Validate(); err != nil {
+		i.recordError(err)
+		i.setState(cfdstate.ConfigStateStopped)
+		return err
+	}
+	if cfg.Token == "" {
+		err := errors.New("token is required to start cloudflared")
+		i.recordError(err)
+		i.setState(cfdstate.ConfigStateStopped)
+		return err
+	}
+
+	// 2. Project config fields → cfdflags.Options → TUNNEL_* env map.
+	opts := cfdflags.Options{
+		Protocol:             cfg.Edge.Protocol,
+		EdgeIPVersion:        cfg.Edge.EdgeIPVersion,
+		EdgeBindAddress:      cfg.Edge.EdgeBindAddress,
+		Region:               cfg.Edge.Region,
+		PostQuantum:          cfg.Edge.PostQuantum,
+		Retries:              cfg.Reliability.Retries,
+		GracePeriod:          cfg.Reliability.GracePeriod,
+		LogLevel:             cfg.Logging.LogLevel,
+		TransportLogLevel:    cfg.Logging.TransportLogLevel,
+		Tags:                 cfg.Identity.Tags,
+		Label:                cfg.Identity.Label,
+		AdvancedEnvOverrides: cfg.AdvancedEnvOverrides,
+	}
+	userEnv := cfdflags.ToTunnelEnv(opts)
+
+	// 3. Resolve binary path: cfdbin store first, then PATH fallback.
 	binPath := "cloudflared"
 	if i.binStore != nil {
-		if p, err := i.binStore.Resolve(""); err == nil {
+		if p, berr := i.binStore.Resolve(cfg.BinaryVersion); berr == nil {
 			binPath = p
 		}
 	}
 
+	// 4. Build the child env: os.Environ() base + user TUNNEL_* vars +
+	//    cfdmgrd-mandated vars (appended last so they always win).
+	env := append([]string{}, os.Environ()...)
+	for k, v := range userEnv {
+		env = append(env, k+"="+v)
+	}
+	env = append(env,
+		"TUNNEL_TOKEN="+cfg.Token,
+		"NO_AUTOUPDATE=true",
+		"AUTOUPDATE_FREQ=87600h",
+		"TUNNEL_METRICS="+i.MetricsAddr(),
+		"TUNNEL_OUTPUT=json",
+	)
+
+	// 5. Build argv: "tunnel --no-autoupdate [--label <l>] run"
+	args := []string{"tunnel", "--no-autoupdate"}
+	args = append(args, cfdflags.LabelArgv(cfg.Identity.Label)...)
+	args = append(args, "run")
+
+	// 6. Log sink: file sink + tailer (via io.MultiWriter so both get output).
+	sink := io.MultiWriter(i.logSink, i.tailer)
+
 	runCtx, cancel := context.WithCancel(ctx)
 	w, err := process.Spawn(runCtx, process.SpawnParams{
 		BinaryPath:   binPath,
-		Args:         []string{"tunnel", "--no-autoupdate", "run"},
-		LogSink:      i.logSink,
+		Args:         args,
+		Env:          env,
+		LogSink:      sink,
 		StartupGrace: 5 * time.Second,
 		StopGrace:    5 * time.Second,
 	})
@@ -173,8 +271,10 @@ func (i *instance) start(ctx context.Context) error {
 	i.cancel = cancel
 	i.mu.Unlock()
 
+	// 7. Exit watcher: notify tailer on exit, update state.
 	go func() {
 		<-w.Done()
+		i.tailer.OnExit(w.Cmd().ProcessState)
 		i.mu.Lock()
 		stopping := i.state == cfdstate.ConfigStateStopping
 		i.w = nil
@@ -191,7 +291,10 @@ func (i *instance) start(ctx context.Context) error {
 	}()
 
 	i.setState(cfdstate.ConfigStateStarted)
-	i.logger.Info("cloudflared instance started", slog.Int("pid", w.PID()))
+	i.logger.Info("cloudflared instance started",
+		slog.Int("pid", w.PID()),
+		slog.String("metrics", i.MetricsAddr()),
+	)
 	return nil
 }
 

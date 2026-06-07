@@ -2,6 +2,7 @@ package logtail
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"io"
 	"os"
@@ -32,6 +33,10 @@ type ProcessTailer struct {
 	seq atomic.Uint64
 
 	stopped atomic.Bool
+
+	// tail holds bytes received via Write that have not yet been
+	// terminated by a newline; flushed on the next Write call.
+	tail []byte
 }
 
 // Entry is one structured log line as surfaced to subscribers and HTTP
@@ -362,6 +367,30 @@ func (p *ProcessTailer) Stop() {
 	}
 	p.subs = nil
 	p.mu.Unlock()
+}
+
+// Write implements io.Writer so that ProcessTailer can be used directly as a
+// LogSink in process.SpawnParams (via io.MultiWriter). Incoming bytes are
+// split on '\n'; each complete line is passed through parseLine with source
+// "stream". Partial lines are buffered in p.tail and flushed on the next
+// Write. If the tailer is stopped, Write drains the call without error to
+// avoid blocking the caller.
+func (p *ProcessTailer) Write(b []byte) (int, error) {
+	if p.stopped.Load() {
+		return len(b), nil
+	}
+	rem := append(p.tail, b...) //nolint:gocritic // intentional: grow tail
+	p.tail = p.tail[:0]
+	for {
+		i := bytes.IndexByte(rem, '\n')
+		if i < 0 {
+			p.tail = append(p.tail[:0], rem...)
+			return len(b), nil
+		}
+		line := rem[:i]
+		rem = rem[i+1:]
+		p.append(parseLine(strings.TrimRight(string(line), "\r"), "stream"))
+	}
 }
 
 // itoa avoids strconv.Itoa to keep the import set minimal; it handles

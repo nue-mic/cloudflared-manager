@@ -106,17 +106,16 @@ func (s *Sampler) Run(ctx context.Context) {
 	}
 }
 
-// tick performs one sampling pass across running instances. PR-07 keeps
-// the alert evaluation dormant; we still drain ListRules so writes from
-// the API layer don't pile up undetected.
+// tick performs one sampling pass across running instances. It scrapes each
+// instance's cloudflared /metrics endpoint, converts the Prometheus samples
+// to TrafficPoints, persists them, and evaluates alert rules.
 func (s *Sampler) tick() {
 	now := time.Now().Unix()
 	stepSec := int64(s.interval / time.Second)
 	if stepSec <= 0 {
 		stepSec = 1
 	}
-	_ = stepSec
-	_, _ = s.store.ListRules() // drain; PR-08 hooks evaluation back in
+	rules, _ := s.store.ListRules()
 	points := make([]TrafficPoint, 0, 16)
 
 	for _, id := range s.src.RunningIDs() {
@@ -129,7 +128,13 @@ func (s *Sampler) tick() {
 			s.log.Debug("metrics scrape failed", slog.String("id", id), slog.Any("err", err))
 			continue
 		}
-		points = append(points, s.toPoints(id, samples, now)...)
+		instPoints := s.toPoints(id, samples, now)
+		points = append(points, instPoints...)
+		// Evaluate alert rules using the first (server-scope) point.
+		if len(instPoints) > 0 {
+			sp := instPoints[0]
+			s.evalRules(rules, id, "", sp.Conns, sp, stepSec, now)
+		}
 	}
 
 	if len(points) > 0 {
@@ -353,10 +358,3 @@ func (s *Sampler) postWebhook(url string, ev AlertEvent, r AlertRule) {
 	}
 	_ = resp.Body.Close()
 }
-
-// 静态保留：evalRules/applyRule 暂未由 tick 调用，但 PR-08 会接回；
-// 这两个 var blanks 让 vet 不报 unused。
-var (
-	_ = (*Sampler).evalRules
-	_ = (*Sampler).applyRule
-)

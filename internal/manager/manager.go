@@ -15,8 +15,8 @@ import (
 
 	"github.com/mia-clark/cloudflared-manager/internal/cfdbin"
 	"github.com/mia-clark/cloudflared-manager/internal/eventbus"
+	"github.com/mia-clark/cloudflared-manager/pkg/cfdconfig"
 	"github.com/mia-clark/cloudflared-manager/pkg/cfdstate"
-	"github.com/mia-clark/cloudflared-manager/pkg/config"
 )
 
 // Options configures the Manager.
@@ -78,11 +78,10 @@ func New(opts Options) (*Manager, error) {
 func (m *Manager) Bus() *eventbus.Bus { return m.opts.Bus }
 
 // LoadAll scans the profiles dir and registers every parseable config
-// file as an instance in the stopped state. PR-04 still parses frps
-// TOML transitionally; PR-08 will switch to YAML + TunnelConfigV1.
-// Unreadable / unparseable files are logged and skipped.
+// file as an instance in the stopped state. Files that cannot be read
+// or parsed as TunnelConfigV1 YAML are logged and skipped.
 func (m *Manager) LoadAll() error {
-	files, err := filepath.Glob(filepath.Join(m.opts.ProfilesDir, "*.toml"))
+	files, err := filepath.Glob(filepath.Join(m.opts.ProfilesDir, "*.yaml"))
 	if err != nil {
 		return err
 	}
@@ -92,8 +91,8 @@ func (m *Manager) LoadAll() error {
 			m.opts.Logger.Warn("skip unreadable config", slog.String("path", f), slog.Any("err", rerr))
 			continue
 		}
-		if _, perr := config.ParseServerTOML(b); perr != nil {
-			m.opts.Logger.Warn("skip unparseable server config", slog.String("path", f), slog.Any("err", perr))
+		if _, perr := cfdconfig.ParseYAML(b); perr != nil {
+			m.opts.Logger.Warn("skip unparseable tunnel config", slog.String("path", f), slog.Any("err", perr))
 			continue
 		}
 		id := idFromPath(f)
@@ -212,9 +211,9 @@ func (m *Manager) List() []Snapshot {
 	return out
 }
 
-// Get returns the snapshot of a single config plus the parsed ServerConfigV1
-// read fresh from disk, and its frpsmgr metadata (name/manualStart).
-func (m *Manager) Get(id string) (Snapshot, *config.ServerConfigV1, MgrMeta, error) {
+// Get returns the snapshot of a single config plus the parsed TunnelConfigV1
+// read fresh from disk, and its manager metadata (name/manualStart).
+func (m *Manager) Get(id string) (Snapshot, *cfdconfig.TunnelConfigV1, MgrMeta, error) {
 	inst := m.get(id)
 	if inst == nil {
 		return Snapshot{}, nil, MgrMeta{}, ErrNotFound
@@ -223,7 +222,7 @@ func (m *Manager) Get(id string) (Snapshot, *config.ServerConfigV1, MgrMeta, err
 	if err != nil {
 		return Snapshot{}, nil, MgrMeta{}, err
 	}
-	sc, err := config.ParseServerTOML(b)
+	sc, err := cfdconfig.ParseYAML(b)
 	if err != nil {
 		return Snapshot{}, nil, MgrMeta{}, err
 	}
@@ -235,26 +234,21 @@ func (m *Manager) Get(id string) (Snapshot, *config.ServerConfigV1, MgrMeta, err
 }
 
 // MgrMeta carries the manager-level metadata (display name, manual start)
-// that lives in meta.json rather than in the frps TOML.
+// that lives in meta.json rather than in the tunnel YAML.
 type MgrMeta struct {
 	Name        string `json:"name"`
 	ManualStart bool   `json:"manualStart"`
 }
 
-// Create persists a new frps config file and registers an instance.
-func (m *Manager) Create(id string, sc *config.ServerConfigV1, mm MgrMeta) error {
+// Create persists a new tunnel config file and registers an instance.
+func (m *Manager) Create(id string, sc *cfdconfig.TunnelConfigV1, mm MgrMeta) error {
 	if err := validateID(id); err != nil {
 		return err
 	}
 	if m.Exists(id) {
 		return ErrExists
 	}
-	// 不在这里调 sc.Complete()：它会把上游默认值（如 ProxyBindAddr=BindAddr=0.0.0.0、
-	// DetailedErrorsToClient=true、NatholeAnalysisDataReserveHours=168 等）写进 sc，
-	// 接着 MarshalTOML 会把这些"用户没设置过"的默认值持久化到 TOML 文件 — 导致用户
-	// 清空字段时 UI 永远看到默认值（"清空不生效"）。
-	// frps worker 子进程启动时会自己 Complete()，所以这里跳过完全安全。
-	b, err := sc.MarshalTOML()
+	b, err := cfdconfig.MarshalYAML(sc)
 	if err != nil {
 		return err
 	}
@@ -273,15 +267,13 @@ func (m *Manager) Create(id string, sc *config.ServerConfigV1, mm MgrMeta) error
 }
 
 // Update replaces the whole config body for an existing instance. If running,
-// it is reloaded (= stop + start, since frps server params need a restart).
-func (m *Manager) Update(id string, sc *config.ServerConfigV1, mm MgrMeta) error {
+// it is reloaded (= stop + start, since cloudflared params need a restart).
+func (m *Manager) Update(id string, sc *cfdconfig.TunnelConfigV1, mm MgrMeta) error {
 	inst := m.get(id)
 	if inst == nil {
 		return ErrNotFound
 	}
-	// 同 Create：不在此处 Complete()，避免把默认值持久化到 TOML（清空字段无法生效）。
-	// worker 启动时自己会 Complete。
-	b, err := sc.MarshalTOML()
+	b, err := cfdconfig.MarshalYAML(sc)
 	if err != nil {
 		return err
 	}
@@ -362,14 +354,14 @@ func (m *Manager) ReadRaw(id string) ([]byte, error) {
 	return os.ReadFile(inst.Path())
 }
 
-// WriteRaw replaces the config file with raw frps TOML bytes after a parse
+// WriteRaw replaces the config file with raw YAML bytes after a parse
 // check. A running instance is reloaded (restart).
 func (m *Manager) WriteRaw(id string, b []byte) error {
 	inst := m.get(id)
 	if inst == nil {
 		return ErrNotFound
 	}
-	if _, err := config.ParseServerTOML(b); err != nil {
+	if _, err := cfdconfig.ParseYAML(b); err != nil {
 		return fmt.Errorf("parse: %w", err)
 	}
 	if err := writeAtomic(inst.Path(), b); err != nil {
@@ -424,12 +416,16 @@ func (m *Manager) RunningIDs() []string {
 
 // MetricsAddr returns the cloudflared --metrics 127.0.0.1:<port>
 // address for the running instance with id, or "" + false when the
-// instance is not registered or has no port assigned. PR-07 always
-// returns false because port allocation lands in PR-08 alongside the
-// TUNNEL_TOKEN injection rewrite.
+// instance is not registered or not in the started state.
 func (m *Manager) MetricsAddr(id string) (string, bool) {
-	_ = id
-	return "", false
+	inst := m.get(id)
+	if inst == nil {
+		return "", false
+	}
+	if inst.State() != cfdstate.ConfigStateStarted {
+		return "", false
+	}
+	return inst.MetricsAddr(), true
 }
 
 // logWriter returns (creating if needed) the per-id append log writer that
@@ -446,7 +442,7 @@ func (m *Manager) logWriter(id string) *instanceLog {
 }
 
 func (m *Manager) pathFor(id string) string {
-	return filepath.Join(m.opts.ProfilesDir, id+".toml")
+	return filepath.Join(m.opts.ProfilesDir, id+".yaml")
 }
 
 func writeAtomic(path string, b []byte) error {

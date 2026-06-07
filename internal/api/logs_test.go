@@ -17,7 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/mia-clark/cloudflared-manager/internal/manager"
-	"github.com/mia-clark/cloudflared-manager/pkg/config"
+	"github.com/mia-clark/cloudflared-manager/pkg/cfdconfig"
 )
 
 // 子进程模型下每个 frps 实例写各自的 <id>.log，不再有合并日志/前缀。
@@ -86,9 +86,9 @@ func newTestManager(t *testing.T, dataDir string) *manager.Manager {
 
 func mustCreateInstance(t *testing.T, m *manager.Manager, id string) {
 	t.Helper()
-	sc, err := config.ParseServerTOML([]byte("bindPort = 7000\n"))
+	sc, err := cfdconfig.ParseYAML([]byte("edge:\n  protocol: auto\n"))
 	if err != nil {
-		t.Fatalf("ParseServerTOML: %v", err)
+		t.Fatalf("ParseYAML: %v", err)
 	}
 	if err := m.Create(id, sc, manager.MgrMeta{Name: id}); err != nil {
 		t.Fatalf("Create %s: %v", id, err)

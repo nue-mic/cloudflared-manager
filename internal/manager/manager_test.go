@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/mia-clark/cloudflared-manager/internal/eventbus"
-	"github.com/mia-clark/cloudflared-manager/pkg/config"
+	"github.com/mia-clark/cloudflared-manager/pkg/cfdconfig"
 )
 
 func newMgr(t *testing.T) (*Manager, string) {
@@ -31,20 +31,22 @@ func newMgr(t *testing.T) (*Manager, string) {
 	return m, tmp
 }
 
-func serverCfg(t *testing.T, bindPort int) *config.ServerConfigV1 {
-	t.Helper()
-	sc, err := config.ParseServerTOML([]byte("bindPort = 7000\n"))
-	if err != nil {
-		t.Fatalf("ParseServerTOML: %v", err)
+// tunnelCfg returns a minimal TunnelConfigV1 suitable for tests that do
+// not actually spawn a cloudflared process. The token is intentionally
+// empty so start() will fail fast (token required) without needing a real
+// binary in PATH.
+func tunnelCfg() *cfdconfig.TunnelConfigV1 {
+	return &cfdconfig.TunnelConfigV1{
+		Edge: cfdconfig.EdgeConfig{Protocol: "auto"},
 	}
-	sc.BindPort = bindPort
-	return sc
 }
 
-// TestCreateGetRoundTrip: Create 写盘后，Get 能读回 bindPort 与 frpsmgr 元数据。
+// TestCreateGetRoundTrip: Create 写盘后，Get 能读回 Edge.Protocol 与管理元数据。
 func TestCreateGetRoundTrip(t *testing.T) {
 	m, _ := newMgr(t)
-	if err := m.Create("main", serverCfg(t, 7001), MgrMeta{Name: "主服务端", ManualStart: true}); err != nil {
+	cfg := tunnelCfg()
+	cfg.Edge.Protocol = "http2"
+	if err := m.Create("main", cfg, MgrMeta{Name: "主连接器", ManualStart: true}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
@@ -52,14 +54,14 @@ func TestCreateGetRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if sc.BindPort != 7001 {
-		t.Fatalf("BindPort = %d, want 7001", sc.BindPort)
+	if sc.Edge.Protocol != "http2" {
+		t.Fatalf("Edge.Protocol = %q, want http2", sc.Edge.Protocol)
 	}
-	if mm.Name != "主服务端" || !mm.ManualStart {
-		t.Fatalf("frpsmgr meta lost: %+v", mm)
+	if mm.Name != "主连接器" || !mm.ManualStart {
+		t.Fatalf("manager meta lost: %+v", mm)
 	}
-	if snap.Name != "主服务端" {
-		t.Fatalf("snapshot name = %q, want 主服务端", snap.Name)
+	if snap.Name != "主连接器" {
+		t.Fatalf("snapshot name = %q, want 主连接器", snap.Name)
 	}
 	if snap.State != "stopped" {
 		t.Fatalf("fresh instance state = %q, want stopped", snap.State)
@@ -69,10 +71,10 @@ func TestCreateGetRoundTrip(t *testing.T) {
 // TestCreateDuplicateRejected: 同 id 重复创建返回 ErrExists。
 func TestCreateDuplicateRejected(t *testing.T) {
 	m, _ := newMgr(t)
-	if err := m.Create("dup", serverCfg(t, 7000), MgrMeta{}); err != nil {
+	if err := m.Create("dup", tunnelCfg(), MgrMeta{}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := m.Create("dup", serverCfg(t, 7000), MgrMeta{}); err != ErrExists {
+	if err := m.Create("dup", tunnelCfg(), MgrMeta{}); err != ErrExists {
 		t.Fatalf("expected ErrExists, got %v", err)
 	}
 }
@@ -80,10 +82,10 @@ func TestCreateDuplicateRejected(t *testing.T) {
 // TestDeleteRemovesFileAndMeta: Delete 后文件消失、Get 404、meta 不再含该 id。
 func TestDeleteRemovesFileAndMeta(t *testing.T) {
 	m, tmp := newMgr(t)
-	if err := m.Create("gone", serverCfg(t, 7000), MgrMeta{Name: "n"}); err != nil {
+	if err := m.Create("gone", tunnelCfg(), MgrMeta{Name: "n"}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	path := filepath.Join(tmp, "profiles", "gone.toml")
+	path := filepath.Join(tmp, "profiles", "gone.yaml")
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("file should exist: %v", err)
 	}
@@ -105,7 +107,7 @@ func TestDeleteRemovesFileAndMeta(t *testing.T) {
 func TestListReflectsCreateAndReorder(t *testing.T) {
 	m, _ := newMgr(t)
 	for _, id := range []string{"a", "b", "c"} {
-		if err := m.Create(id, serverCfg(t, 7000), MgrMeta{Name: id}); err != nil {
+		if err := m.Create(id, tunnelCfg(), MgrMeta{Name: id}); err != nil {
 			t.Fatalf("Create %s: %v", id, err)
 		}
 	}
@@ -121,13 +123,29 @@ func TestListReflectsCreateAndReorder(t *testing.T) {
 	}
 }
 
-// TestWriteRawRejectsGarbage: WriteRaw 对非法 TOML 返回 parse 错误。
+// TestWriteRawRejectsGarbage: WriteRaw 对非法 YAML 返回 parse 错误。
 func TestWriteRawRejectsGarbage(t *testing.T) {
 	m, _ := newMgr(t)
-	if err := m.Create("x", serverCfg(t, 7000), MgrMeta{}); err != nil {
+	if err := m.Create("x", tunnelCfg(), MgrMeta{}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := m.WriteRaw("x", []byte("this is = = not valid toml ===")); err == nil {
-		t.Fatalf("expected parse error for garbage TOML")
+	// Inject a tab character which is illegal in YAML block scalars in this context.
+	if err := m.WriteRaw("x", []byte("edge:\n\tprotocol: bad-tab\n")); err == nil {
+		t.Fatalf("expected parse error for garbage YAML")
+	}
+}
+
+// TestMetricsPort: 同一 id 每次 allocMetricsPort 返回相同端口，且在合法范围内。
+func TestMetricsPort(t *testing.T) {
+	port := allocMetricsPort("my-tunnel")
+	if port < 20241 || port > 20998 {
+		t.Fatalf("port %d outside [20241, 20998]", port)
+	}
+	if allocMetricsPort("my-tunnel") != port {
+		t.Fatal("port not stable for same id")
+	}
+	if allocMetricsPort("other-tunnel") == port {
+		// collision possible but extremely unlikely for two short strings
+		t.Log("collision (acceptable, probabilistic)")
 	}
 }

@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/mia-clark/cloudflared-manager/internal/manager"
-	"github.com/mia-clark/cloudflared-manager/pkg/config"
+	"github.com/mia-clark/cloudflared-manager/pkg/cfdconfig"
 )
 
 // ImportExportHandler implements /api/v1/import/* and /api/v1/export/*.
@@ -31,7 +31,7 @@ func NewImportExportHandler(m *manager.Manager, log *slog.Logger) *ImportExportH
 	return &ImportExportHandler{m: m, log: log}
 }
 
-// ImportFile handles a multipart upload with a single ".toml/.ini/.conf"
+// ImportFile handles a multipart upload with a single ".yaml/.yml"
 // file in the "file" field. The id is taken from the filename (without
 // extension) unless overridden by the "id" form value.
 func (h *ImportExportHandler) ImportFile(w http.ResponseWriter, r *http.Request) {
@@ -128,7 +128,7 @@ func (h *ImportExportHandler) ImportZIP(w http.ResponseWriter, r *http.Request) 
 	for _, zf := range zr.File {
 		name := filepath.Base(zf.Name)
 		ext := strings.ToLower(filepath.Ext(name))
-		if ext != ".toml" && ext != ".ini" && ext != ".conf" {
+		if ext != ".yaml" && ext != ".yml" {
 			continue
 		}
 		rc, err := zf.Open()
@@ -157,24 +157,22 @@ func (h *ImportExportHandler) ExportConfig(w http.ResponseWriter, r *http.Reques
 	if writeManagerError(w, err) {
 		return
 	}
-	w.Header().Set("Content-Type", "application/toml")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.toml"`, id))
+	w.Header().Set("Content-Type", "application/yaml")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.yaml"`, id))
 	_, _ = w.Write(b)
 }
 
 // ExportAll returns a zip archive of every config file plus meta.json.
 func (h *ImportExportHandler) ExportAll(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="frps-manager-export-%s.zip"`, time.Now().UTC().Format("20060102-150405")))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="cloudflared-manager-export-%s.zip"`, time.Now().UTC().Format("20060102-150405")))
 
 	zw := zip.NewWriter(w)
 	defer zw.Close()
 
-	matches, _ := filepath.Glob(filepath.Join(h.m.ProfilesDir(), "*.toml"))
-	for _, ext := range []string{"*.conf", "*.ini"} {
-		extra, _ := filepath.Glob(filepath.Join(h.m.ProfilesDir(), ext))
-		matches = append(matches, extra...)
-	}
+	matches, _ := filepath.Glob(filepath.Join(h.m.ProfilesDir(), "*.yaml"))
+	extra, _ := filepath.Glob(filepath.Join(h.m.ProfilesDir(), "*.yml"))
+	matches = append(matches, extra...)
 	for _, p := range matches {
 		raw, err := os.ReadFile(p)
 		if err != nil {
@@ -203,13 +201,13 @@ func (h *ImportExportHandler) persistRaw(w http.ResponseWriter, id string, raw [
 		return
 	}
 	snap, sc, mm, _ := h.m.Get(id)
-	WriteJSON(w, http.StatusOK, configEnvelope{Snapshot: snap, Config: sc, Frpsmgr: mm})
+	WriteJSON(w, http.StatusOK, configEnvelope{Snapshot: snap, Config: sc, Cfdmgr: mm})
 }
 
 // upsertRaw creates the config if absent, otherwise replaces its body.
 func (h *ImportExportHandler) upsertRaw(id string, raw []byte) error {
 	if !h.m.Exists(id) {
-		sc, err := config.ParseServerTOML(raw)
+		sc, err := cfdconfig.ParseYAML(raw)
 		if err != nil {
 			return fmt.Errorf("parse: %w", err)
 		}
