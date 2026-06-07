@@ -165,14 +165,10 @@ const Logs: React.FC = () => {
             {configs.map((c) => (
               <Option key={c.id} value={c.id}>
                 <Space>
-                  <span
-                    className={
-                      c.status === 'started' || c.status === 'running'
-                        ? 'status-indicator-running'
-                        : 'status-indicator-stopped'
-                    }
-                    style={{ width: 6, height: 6 }}
-                  />
+                  <span style={{
+                    width: 6, height: 6, borderRadius: '50%', display: 'inline-block',
+                    background: (c.status === 'started' || c.status === 'running') ? '#52c41a' : '#d9d9d9',
+                  }} />
                   {c.name}{c.status === 'started' || c.status === 'running' ? ' (运行中)' : ''}
                 </Space>
               </Option>
@@ -250,7 +246,7 @@ const Logs: React.FC = () => {
             </pre>
           ) : (
             <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Empty description="请先选择一个 FRPS 实例" />
+              <Empty description="请先选择一个 cloudflared 实例" />
             </div>
           )}
         </div>

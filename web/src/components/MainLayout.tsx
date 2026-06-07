@@ -3,7 +3,6 @@ import { Layout, Menu, Button, Space, Typography, Modal, Tag, Tooltip, Badge, th
 import {
   DashboardOutlined,
   ClusterOutlined,
-  MonitorOutlined,
   FileTextOutlined,
   HddOutlined,
   ToolOutlined,
@@ -11,10 +10,10 @@ import {
   SwapOutlined,
   PoweroffOutlined,
   SafetyCertificateOutlined,
-  BookOutlined,
   LineChartOutlined,
   BellOutlined,
   InfoCircleOutlined,
+  CloudDownloadOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
@@ -36,7 +35,6 @@ const MainLayout: React.FC = () => {
   const stream = useEventStream();
 
   const [version, setVersion] = useState<string>('获取中…');
-  const [frpVer, setFrpVer] = useState<string>('');
   const [hasUpdate, setHasUpdate] = useState(false);
   const [latestVer, setLatestVer] = useState<string>('');
 
@@ -56,7 +54,6 @@ const MainLayout: React.FC = () => {
       const resp = await client.get('/api/v1/version');
       if (resp.status === 200) {
         setVersion(resp.data.daemon || resp.data.version || '');
-        setFrpVer(resp.data.frp || '');
       }
     } catch {
       // 静默：实时连接状态由 WebSocket 反映
@@ -104,8 +101,8 @@ const MainLayout: React.FC = () => {
         type: 'group',
         label: '运行',
         children: [
-          { key: '/configs', icon: <ClusterOutlined />, label: 'FRPS 实例' },
-          { key: '/runtime', icon: <MonitorOutlined />, label: '运行时监控' },
+          { key: '/configs', icon: <ClusterOutlined />, label: 'cloudflared 实例' },
+          { key: '/binaries', icon: <CloudDownloadOutlined />, label: '二进制管理' },
           { key: '/traffic', icon: <LineChartOutlined />, label: '历史流量' },
           { key: '/alerts', icon: <BellOutlined />, label: '告警' },
           { key: '/logs', icon: <FileTextOutlined />, label: '日志流' },
@@ -123,7 +120,6 @@ const MainLayout: React.FC = () => {
         label: '工具',
         children: [
           { key: '/tools/validate', icon: <ToolOutlined />, label: '配置校验' },
-          { key: '/tools/reference', icon: <BookOutlined />, label: 'TOML 参考' },
           { key: '/import-export', icon: <SwapOutlined />, label: '导入 / 导出' },
         ],
       },
@@ -146,7 +142,7 @@ const MainLayout: React.FC = () => {
   // 根据 path 选中：取首段或两段做匹配
   const selectedKey = useMemo(() => {
     const p = location.pathname;
-    const candidates = ['/tools/validate', '/tools/reference', '/import-export'];
+    const candidates = ['/tools/validate', '/import-export', '/binaries'];
     for (const c of candidates) if (p.startsWith(c)) return c;
     const seg = '/' + p.split('/').filter(Boolean)[0];
     return seg || '/dashboard';
@@ -183,7 +179,7 @@ const MainLayout: React.FC = () => {
         >
           <SafetyCertificateOutlined style={{ fontSize: 22, color: token.colorPrimary }} />
           <Text strong style={{ color: '#fff', fontSize: 15, letterSpacing: 0.5 }}>
-            FRPS Manager
+            Cloudflared Manager
           </Text>
         </div>
         <Menu
@@ -243,8 +239,7 @@ const MainLayout: React.FC = () => {
                   onClick={() => navigate('/about')}
                   style={{ cursor: 'pointer' }}
                 >
-                  Daemon v{version || '—'}
-                  {frpVer ? ` · frp ${frpVer}` : ''}
+                  cfdmgrd v{version || '—'}
                 </Tag>
               </Badge>
             </Tooltip>

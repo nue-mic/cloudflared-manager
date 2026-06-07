@@ -1,23 +1,31 @@
 import axios from 'axios';
+import type {
+  ConfigList,
+  ConfigEnvelope,
+  ValidateResp,
+  BinaryList,
+  BinaryMeta,
+  BinaryItem,
+} from './types';
 
-// 从 localStorage 获取已保存的 API Token
+// localStorage key
+const TOKEN_KEY = 'cfdmgr_api_token';
+
 export const getAPIToken = (): string => {
-  return localStorage.getItem('frpsmgr_api_token') || '';
+  return localStorage.getItem(TOKEN_KEY) || '';
 };
 
-// 保存 API Token
 export const setAPIToken = (token: string) => {
-  localStorage.setItem('frpsmgr_api_token', token);
+  localStorage.setItem(TOKEN_KEY, token);
 };
 
-// 清除 API Token
 export const clearAPIToken = () => {
-  localStorage.removeItem('frpsmgr_api_token');
+  localStorage.removeItem(TOKEN_KEY);
 };
 
 const client = axios.create({
-  baseURL: '', // 使用相对路径以走 Vite proxy 代理或同域名部署
-  timeout: 15000,
+  baseURL: '',
+  timeout: 30000,
 });
 
 // 请求拦截器：自动注入 Bearer Token
@@ -29,22 +37,19 @@ client.interceptors.request.use(
     }
     return config;
   },
-  (error) => {
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
-// 响应拦截器：统一处理 401 权限失效
+// 响应拦截器：统一处理 401
 client.interceptors.response.use(
-  (response) => {
-    return response;
-  },
+  (response) => response,
   (error) => {
     if (error.response && error.response.status === 401) {
-      // 排除验证 token 时的错误（以防死循环）
-      if (!error.config.url?.includes('/api/v1/version') && !error.config.url?.includes('/api/v1/health')) {
+      if (
+        !error.config.url?.includes('/api/v1/version') &&
+        !error.config.url?.includes('/api/v1/health')
+      ) {
         clearAPIToken();
-        // 强制重定向至登录页
         window.location.href = '/login';
       }
     }
@@ -53,3 +58,39 @@ client.interceptors.response.use(
 );
 
 export default client;
+
+// ── Configs API ──────────────────────────────────────────────────────────────
+
+export const configsApi = {
+  list: () => client.get<ConfigList>('/api/v1/configs'),
+  get: (id: string) => client.get<ConfigEnvelope>(`/api/v1/configs/${id}`),
+  create: (payload: object) => client.post('/api/v1/configs', payload),
+  update: (id: string, payload: object) => client.put(`/api/v1/configs/${id}`, payload),
+  delete: (id: string) => client.delete(`/api/v1/configs/${id}`),
+  start: (id: string) => client.post(`/api/v1/configs/${id}/start`),
+  stop: (id: string) => client.post(`/api/v1/configs/${id}/stop`),
+  reload: (id: string) => client.post(`/api/v1/configs/${id}/reload`),
+  duplicate: (id: string, newId: string) =>
+    client.post(`/api/v1/configs/${id}/duplicate`, { new_id: newId }),
+  status: (id: string) => client.get(`/api/v1/configs/${id}/status`),
+};
+
+// ── Binaries API ─────────────────────────────────────────────────────────────
+
+export const binariesApi = {
+  list: () => client.get<BinaryList>('/api/v1/binaries'),
+  available: () => client.get<BinaryMeta>('/api/v1/binaries/available'),
+  install: (version: string) =>
+    client.post<BinaryItem>('/api/v1/binaries/install', { version }),
+  activate: (version: string) =>
+    client.post('/api/v1/binaries/activate', { version }),
+  delete: (version: string) => client.delete(`/api/v1/binaries/${encodeURIComponent(version)}`),
+};
+
+// ── Validate API ─────────────────────────────────────────────────────────────
+export const validateApi = {
+  validate: (content: string) =>
+    client.post<ValidateResp>('/api/v1/validate', content, {
+      headers: { 'Content-Type': 'text/plain' },
+    }),
+};

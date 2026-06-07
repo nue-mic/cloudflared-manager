@@ -8,12 +8,11 @@ import Configs from './pages/Configs';
 import Logs from './pages/Logs';
 import ImportExport from './pages/ImportExport';
 
-const Runtime = lazy(() => import('./pages/Runtime'));
+const Binaries = lazy(() => import('./pages/Binaries'));
 const Traffic = lazy(() => import('./pages/Traffic'));
 const Alerts = lazy(() => import('./pages/Alerts'));
 const SystemPage = lazy(() => import('./pages/System'));
 const ToolsValidate = lazy(() => import('./pages/ToolsValidate'));
-const TomlReference = lazy(() => import('./pages/TomlReference'));
 const Settings = lazy(() => import('./pages/Settings'));
 const About = lazy(() => import('./pages/About'));
 
@@ -41,7 +40,7 @@ function App() {
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="configs" element={<Configs />} />
-            <Route path="runtime" element={<Runtime />} />
+            <Route path="binaries" element={<Binaries />} />
             <Route path="traffic" element={<Traffic />} />
             <Route path="alerts" element={<Alerts />} />
             <Route path="logs" element={<Logs />} />
@@ -49,7 +48,6 @@ function App() {
             <Route path="tools">
               <Route index element={<Navigate to="/tools/validate" replace />} />
               <Route path="validate" element={<ToolsValidate />} />
-              <Route path="reference" element={<TomlReference />} />
             </Route>
             <Route path="import-export" element={<ImportExport />} />
             <Route path="settings" element={<Settings />} />

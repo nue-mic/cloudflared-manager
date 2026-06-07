@@ -16,20 +16,13 @@ import client from '../api/client';
 
 const { Title, Text, Paragraph } = Typography;
 
-const SAMPLE_TOML = `bindAddr = "0.0.0.0"
-bindPort = 7000
+const SAMPLE_TOML = `tunnel: my-tunnel-id
+credentials-file: /etc/cloudflared/my-tunnel.json
 
-vhostHTTPPort = 80
-vhostHTTPSPort = 443
-subDomainHost = "frp.example.com"
-
-[auth]
-method = "token"
-token = "your-token"
-
-[log]
-level = "info"
-maxDays = 3
+ingress:
+  - hostname: example.com
+    service: http://localhost:8080
+  - service: http_status:404
 `;
 
 interface ValidateResp {
@@ -46,7 +39,7 @@ const ToolsValidate: React.FC = () => {
 
   const submit = async () => {
     if (!content.trim()) {
-      message.warning('请粘贴 TOML / INI 配置内容');
+      message.warning('请粘贴 YAML 配置内容');
       return;
     }
     setLoading(true);
@@ -75,7 +68,7 @@ const ToolsValidate: React.FC = () => {
             <FileTextOutlined /> 配置校验
           </Title>
           <Text type="secondary" style={{ fontSize: 13 }}>
-            粘贴 frps 服务端的 TOML 配置，由后端解析器完整解析后返回错误明细。不会修改任何持久化数据。
+            粘贴 cloudflared 隧道的 YAML 配置，由后端解析器完整解析后返回错误明细。不会修改任何持久化数据。
           </Text>
         </Space>
       </Card>
@@ -84,7 +77,7 @@ const ToolsValidate: React.FC = () => {
         title={
           <Space>
             <Text>配置文本</Text>
-            <Tag bordered={false}>TOML / INI</Tag>
+            <Tag bordered={false}>YAML</Tag>
           </Space>
         }
         extra={

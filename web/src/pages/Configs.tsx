@@ -1,11 +1,9 @@
 import { useEffect, useState, useRef } from 'react';
 import {
   Card, Row, Col, Button, Badge, Space, Typography, Popconfirm,
-  Tabs, Form, Input, InputNumber, Switch, Modal,
-  message, Tag, Tooltip, Empty, List, Dropdown,
+  Form, Input, Switch, Modal, message, Tag, Tooltip, Empty, List,
   theme as antdTheme,
 } from 'antd';
-import type { MenuProps } from 'antd';
 import {
   PlayCircleOutlined,
   StopOutlined,
@@ -13,119 +11,150 @@ import {
   DeleteOutlined,
   CopyOutlined,
   EditOutlined,
-  CodeOutlined,
   PlusOutlined,
-  CheckCircleOutlined,
-  DownloadOutlined,
   ExclamationCircleOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
 } from '@ant-design/icons';
 
-const LIST_COMPACT_KEY = 'frpsmgr_configs_compact';
 import CodeMirror from '@uiw/react-codemirror';
 import { StreamLanguage } from '@codemirror/language';
-import { toml } from '@codemirror/legacy-modes/mode/toml';
+import { yaml as yamlMode } from '@codemirror/legacy-modes/mode/yaml';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView } from '@codemirror/view';
 
-// 与 VS Code 默认 monospace 字体栈对齐。
-const VSCODE_MONO = `'Cascadia Code', 'Cascadia Mono', Consolas, 'SF Mono', Menlo, Monaco, 'Roboto Mono', 'Fira Code', 'JetBrains Mono', 'Source Code Pro', 'Liberation Mono', 'Courier New', monospace`;
+import client from '../api/client';
+import { useTheme } from '../theme/ThemeContext';
+import { useEventSubscription } from '../events/EventStreamContext';
+import type { InstanceStateData } from '../events/types';
+import type { Snapshot, ConfigEnvelope, MgrMeta, TunnelConfigV1 } from '../api/types';
 
-const tomlEditorFontTheme = EditorView.theme({
+const { Title, Text } = Typography;
+
+const VSCODE_MONO = `'Cascadia Code', Consolas, 'SF Mono', Menlo, monospace`;
+const yamlFontTheme = EditorView.theme({
   '&': { fontFamily: VSCODE_MONO, fontSize: '13.5px' },
-  '.cm-content': { fontFamily: VSCODE_MONO, fontVariantLigatures: 'contextual', caretColor: '#fff' },
+  '.cm-content': { fontFamily: VSCODE_MONO },
   '.cm-gutters': { fontFamily: VSCODE_MONO, fontSize: '12.5px' },
   '.cm-scroller': { lineHeight: '1.55' },
 });
 
-import client, { getAPIToken } from '../api/client';
-import { useTheme } from '../theme/ThemeContext';
-import { useEventSubscription } from '../events/EventStreamContext';
-import type { InstanceStateData } from '../events/types';
-import type { Snapshot, ServerConfig, MgrMeta, ConfigEnvelope, WebServerInfo } from '../api/types';
-import {
-  buildServerConfigPayload,
-  flattenServerConfig,
-  mergeServerConfig,
-  type ServerFullFormValues,
-} from './serverConfigForm';
-import ServerConfigGroups from './ServerConfigGroups';
-
-const { Title, Text } = Typography;
-
-// 可视化表单顶层值：实例元数据 + 扁平化的全部 frps 字段。
-// 扁平字段定义见 ./serverConfigForm.ts（提交时由 buildServerConfigPayload 折叠回嵌套对象）。
-interface ServerFormValues extends ServerFullFormValues {
-  name?: string;
-  manualStart?: boolean;
+// 简单的 yaml stringify（仅用于展示；保存时直接发 yaml 文本通过 raw 接口）
+function toYaml(obj: unknown, indent = 0): string {
+  if (obj === null || obj === undefined) return 'null';
+  if (typeof obj === 'string') {
+    if (obj.includes('\n') || obj.includes('"') || obj.includes(':')) {
+      return `"${obj.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+    }
+    return obj;
+  }
+  if (typeof obj === 'boolean' || typeof obj === 'number') return String(obj);
+  if (Array.isArray(obj)) {
+    if (obj.length === 0) return '[]';
+    const pad = ' '.repeat(indent + 2);
+    return obj.map((v) => `\n${pad}- ${toYaml(v, indent + 2)}`).join('');
+  }
+  if (typeof obj === 'object') {
+    const entries = Object.entries(obj as Record<string, unknown>).filter(
+      ([, v]) => v !== undefined && v !== null
+    );
+    if (entries.length === 0) return '{}';
+    const pad = ' '.repeat(indent + 2);
+    return entries.map(([k, v]) => `\n${pad}${k}: ${toYaml(v, indent + 2)}`).join('');
+  }
+  return String(obj);
 }
 
-interface NewConfigValues {
+function configToYaml(cfg: TunnelConfigV1): string {
+  try {
+    return Object.entries(cfg)
+      .filter(([, v]) => v !== undefined && v !== null)
+      .map(([k, v]) => `${k}:${toYaml(v, 0)}`)
+      .join('\n');
+  } catch {
+    return '';
+  }
+}
+
+// 极简 yaml → object（仅解析顶层 k: v；复杂 yaml 留给后端 /validate 校验）
+function parseSimpleYaml(text: string): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const colon = trimmed.indexOf(':');
+    if (colon < 0) continue;
+    const key = trimmed.slice(0, colon).trim();
+    const val = trimmed.slice(colon + 1).trim();
+    if (!key) continue;
+    if (val === 'true') result[key] = true;
+    else if (val === 'false') result[key] = false;
+    else if (val !== '' && !isNaN(Number(val))) result[key] = Number(val);
+    else if (val !== '') result[key] = val.replace(/^["']|["']$/g, '');
+  }
+  return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface EditFormValues {
   id: string;
-  name?: string;
-  bindAddr?: string;
-  bindPort?: number;
-  authToken?: string;
-  manualStart?: boolean;
+  name: string;
+  token: string;
+  manualStart: boolean;
 }
 
 const Configs: React.FC = () => {
-  const { token } = antdTheme.useToken();
+  const { token: themeToken } = antdTheme.useToken();
   const { resolved: themeMode } = useTheme();
-  const tomlExtensions = [StreamLanguage.define(toml), tomlEditorFontTheme];
+  const yamlExtensions = [StreamLanguage.define(yamlMode), yamlFontTheme];
 
   const [configs, setConfigs] = useState<Snapshot[]>([]);
-  const [activeConfigId, setActiveConfigId] = useState<string>('');
   const [statusLoading, setStatusLoading] = useState<Record<string, boolean>>({});
+  const [activeConfigId, setActiveConfigId] = useState<string>('');
 
-  // 选项卡：常规配置（可视化）/ 高级 TOML / 运行日志
-  const [activeTab, setActiveTab] = useState<string>('visual');
+  // 编辑弹窗
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null); // null = 新建
+  const [yamlText, setYamlText] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  // 当前配置信封（用于保存时透传 config 的未知字段）
-  const [detailEnvelope, setDetailEnvelope] = useState<ConfigEnvelope | null>(null);
-  const [rawToml, setRawToml] = useState<string>('');
-  const [tomlLoading, setTomlLoading] = useState<boolean>(false);
+  // 复制弹窗
+  const [dupModalOpen, setDupModalOpen] = useState(false);
+  const [dupSourceId, setDupSourceId] = useState('');
+  const [dupNewId, setDupNewId] = useState('');
 
-  // 迷你日志状态
-  const MINI_LOGS_MAX = 1000;
-  const [miniLogLines, setMiniLogLines] = useState<string[]>([]);
-  const [miniLogsLoading, setMiniLogsLoading] = useState<boolean>(false);
-  const [miniLogsPaused, setMiniLogsPaused] = useState<boolean>(false);
-  const [miniLogsWsState, setMiniLogsWsState] = useState<'idle' | 'connecting' | 'connected' | 'closed'>('idle');
-  const miniLogsPausedRef = useRef(miniLogsPaused);
-  miniLogsPausedRef.current = miniLogsPaused;
-  const miniLogsWsRef = useRef<WebSocket | null>(null);
-  const miniLogsBottomRef = useRef<HTMLDivElement | null>(null);
+  const [form] = Form.useForm<EditFormValues>();
 
-  // 新建配置 Modal
-  const [newConfigModalOpen, setNewConfigModalOpen] = useState<boolean>(false);
+  const configsRef = useRef(configs);
+  useEffect(() => { configsRef.current = configs; }, [configs]);
 
-  // 左栏紧凑模式
-  const [compactList, setCompactList] = useState<boolean>(
-    () => localStorage.getItem(LIST_COMPACT_KEY) === '1'
-  );
-  const toggleCompactList = () => {
-    setCompactList((prev) => {
-      const next = !prev;
-      localStorage.setItem(LIST_COMPACT_KEY, next ? '1' : '0');
-      return next;
-    });
-  };
+  useEffect(() => { fetchConfigs(); }, []);
 
-  const [form] = Form.useForm<ServerFormValues>();
-  const [newConfigForm] = Form.useForm<NewConfigValues>();
-
+  // 轮询状态
   useEffect(() => {
-    fetchConfigs();
+    const poll = () => {
+      configsRef.current.forEach((c) => fetchStatus(c.id));
+    };
+    poll();
+    const timer = setInterval(poll, 4000);
+    return () => clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    if (activeConfigId) {
-      handleLoadConfigDetails(activeConfigId);
+  // WebSocket 事件驱动刷新
+  useEventSubscription(['config.changed', 'config.deleted', 'instance.state'], (e) => {
+    if (e.type === 'instance.state' && e.config_id) {
+      const st = (e.data as InstanceStateData | undefined)?.state;
+      if (st) {
+        setConfigs((prev) =>
+          prev.map((c) => (c.id === e.config_id ? { ...c, state: st as Snapshot['state'] } : c))
+        );
+      }
+    } else if (e.type === 'config.deleted' && e.config_id) {
+      setConfigs((prev) => prev.filter((c) => c.id !== e.config_id));
+      setActiveConfigId((prev) => (prev === e.config_id ? '' : prev));
+    } else if (e.type === 'config.changed') {
+      fetchConfigs();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeConfigId, activeTab]);
+  });
 
   const fetchConfigs = async () => {
     try {
@@ -147,436 +176,192 @@ const Configs: React.FC = () => {
       const resp = await client.get(`/api/v1/configs/${id}/status`);
       if (resp.status === 200) {
         const snap = resp.data as Snapshot;
-        setConfigs(prev => prev.map(c => (c.id === id ? { ...c, ...snap } : c)));
+        setConfigs((prev) => prev.map((c) => (c.id === id ? { ...c, ...snap } : c)));
       }
-    } catch {
-      // 忽略状态请求错误
-    }
+    } catch {/* 静默 */}
   };
 
-  // 实时同步配置引用，规避闭包陷阱
-  const configsRef = useRef(configs);
-  useEffect(() => {
-    configsRef.current = configs;
-  }, [configs]);
+  // ── 生命周期操作 ──────────────────────────────────────────────────────────
 
-  // 轮询状态（每 4 秒）
-  useEffect(() => {
-    if (configsRef.current && configsRef.current.length > 0) {
-      configsRef.current.forEach(c => fetchStatus(c.id));
-    }
-    const timer = setInterval(() => {
-      if (configsRef.current && configsRef.current.length > 0) {
-        configsRef.current.forEach(c => fetchStatus(c.id));
-      }
-    }, 4000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // 事件驱动：实例启停/配置变更/删除时实时刷新列表
-  useEventSubscription(['config.changed', 'config.deleted', 'instance.state'], (e) => {
-    if (e.type === 'instance.state' && e.config_id) {
-      const st = (e.data as InstanceStateData | undefined)?.state;
-      if (st) {
-        setConfigs(prev => prev.map(c => (c.id === e.config_id ? { ...c, state: st as Snapshot['state'] } : c)));
-      }
-    } else if (e.type === 'config.deleted' && e.config_id) {
-      // 删除事件：直接从列表移除，避免必须刷页面才反映
-      setConfigs(prev => prev.filter(c => c.id !== e.config_id));
-      setActiveConfigId(prev => (prev === e.config_id ? '' : prev));
-    } else if (e.type === 'config.changed') {
-      // 创建/更新事件：拉一次列表保持同步
-      fetchConfigs();
-    }
-  });
-
-  const handleStartInstance = async (id: string) => {
-    setStatusLoading(prev => ({ ...prev, [id]: true }));
+  const handleStart = async (id: string) => {
+    setStatusLoading((p) => ({ ...p, [id]: true }));
     try {
       await client.post(`/api/v1/configs/${id}/start`);
       message.success('启动指令已发送');
-      fetchStatus(id);
-    } catch (err: any) {
-      message.error('启动失败: ' + (err.response?.data?.error?.message || err.message));
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: { message?: string } } }; message?: string };
+      message.error('启动失败: ' + (e.response?.data?.error?.message || e.message));
     } finally {
-      setStatusLoading(prev => ({ ...prev, [id]: false }));
+      setStatusLoading((p) => ({ ...p, [id]: false }));
+      fetchStatus(id);
     }
   };
 
-  const handleStopInstance = async (id: string) => {
-    setStatusLoading(prev => ({ ...prev, [id]: true }));
+  const handleStop = async (id: string) => {
+    setStatusLoading((p) => ({ ...p, [id]: true }));
     try {
       await client.post(`/api/v1/configs/${id}/stop`);
       message.success('停止指令已发送');
-      fetchStatus(id);
-    } catch (err: any) {
-      message.error('停止失败: ' + (err.response?.data?.error?.message || err.message));
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: { message?: string } } }; message?: string };
+      message.error('停止失败: ' + (e.response?.data?.error?.message || e.message));
     } finally {
-      setStatusLoading(prev => ({ ...prev, [id]: false }));
+      setStatusLoading((p) => ({ ...p, [id]: false }));
+      fetchStatus(id);
     }
   };
 
-  // reload = 重启（frps 子进程不支持热重载，后端会停后再起）
-  const handleReloadInstance = async (id: string) => {
-    setStatusLoading(prev => ({ ...prev, [id]: true }));
+  const handleReload = async (id: string) => {
+    setStatusLoading((p) => ({ ...p, [id]: true }));
     try {
       await client.post(`/api/v1/configs/${id}/reload`);
       message.success('已重启实例');
-      fetchStatus(id);
-    } catch (err: any) {
-      message.error('重启失败: ' + (err.response?.data?.error?.message || err.message));
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: { message?: string } } }; message?: string };
+      message.error('重启失败: ' + (e.response?.data?.error?.message || e.message));
     } finally {
-      setStatusLoading(prev => ({ ...prev, [id]: false }));
+      setStatusLoading((p) => ({ ...p, [id]: false }));
+      fetchStatus(id);
     }
   };
 
-  const handleDeleteConfig = async (id: string) => {
+  const handleDelete = async (id: string) => {
     try {
       await client.delete(`/api/v1/configs/${id}`);
       message.success('配置已删除');
-      if (activeConfigId === id) {
-        setActiveConfigId('');
-        setDetailEnvelope(null);
-      }
-      fetchConfigs();
+      setConfigs((prev) => prev.filter((c) => c.id !== id));
+      if (activeConfigId === id) setActiveConfigId('');
     } catch {
       message.error('删除配置失败');
     }
   };
 
-  const handleDuplicateConfig = async (id: string) => {
-    const newId = `${id}_copy`;
+  // ── 编辑弹窗 ─────────────────────────────────────────────────────────────
+
+  const openCreate = () => {
+    setEditingId(null);
+    form.resetFields();
+    setYamlText('# 在此输入 cloudflared 隧道 YAML 配置\n');
+    setModalOpen(true);
+  };
+
+  const openEdit = async (id: string) => {
+    setEditingId(id);
     try {
-      await client.post(`/api/v1/configs/${id}/duplicate`, { new_id: newId });
-      message.success(`已复制为新配置: ${newId}`);
-      fetchConfigs();
-    } catch (err: any) {
-      message.error('复制失败: ' + (err.response?.data?.error?.message || err.message));
-    }
-  };
-
-  // 导出单个配置为 TOML 文件
-  const handleExportConfig = async (id: string) => {
-    try {
-      const resp = await client.get(`/api/v1/configs/${id}/export`, { responseType: 'blob' });
-      const blob = new Blob([resp.data], { type: 'application/toml' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${id}.toml`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
-      message.success(`已导出 ${id}.toml`);
-    } catch (err: any) {
-      message.error('导出失败: ' + (err.response?.data?.error?.message || err.message));
-    }
-  };
-
-  // 右键菜单
-  const buildContextMenu = (item: Snapshot): MenuProps => {
-    const isRunning = item.state === 'started';
-    return {
-      items: [
-        isRunning
-          ? { key: 'stop', label: '停止', icon: <StopOutlined /> }
-          : { key: 'start', label: '启动', icon: <PlayCircleOutlined /> },
-        { key: 'reload', label: '重启 (reload)', icon: <ReloadOutlined />, disabled: !isRunning },
-        { type: 'divider' },
-        { key: 'duplicate', label: '克隆配置', icon: <CopyOutlined /> },
-        { key: 'export', label: '导出 TOML', icon: <DownloadOutlined /> },
-        { type: 'divider' },
-        { key: 'delete', label: '删除配置', icon: <DeleteOutlined />, danger: true },
-      ],
-      onClick: ({ key, domEvent }) => {
-        domEvent.stopPropagation();
-        switch (key) {
-          case 'start': handleStartInstance(item.id); break;
-          case 'stop': handleStopInstance(item.id); break;
-          case 'reload': handleReloadInstance(item.id); break;
-          case 'duplicate': handleDuplicateConfig(item.id); break;
-          case 'export': handleExportConfig(item.id); break;
-          case 'delete':
-            Modal.confirm({
-              title: `确定删除「${item.name || item.id}」？`,
-              icon: <ExclamationCircleOutlined />,
-              content: '删除后该 FRPS 服务端配置无法恢复。',
-              okText: '删除',
-              okType: 'danger',
-              cancelText: '取消',
-              onOk: () => handleDeleteConfig(item.id),
-            });
-            break;
-        }
-      },
-    };
-  };
-
-  // 根据当前 Tab 加载对应数据
-  const handleLoadConfigDetails = async (id: string) => {
-    if (activeTab === 'visual') {
-      loadVisualConfig(id);
-    } else if (activeTab === 'toml') {
-      loadRawToml(id);
-    } else if (activeTab === 'logs') {
-      loadMiniLogs(id);
-    }
-  };
-
-  // 加载常规属性：从 GET /configs/{id} 的 env.config.* / env.frpsmgr.* 回填（不要用列表快照）
-  // 全字段表单使用 flattenServerConfig 把 env.config 展平为扁平字段。
-  const loadVisualConfig = async (id: string) => {
-    try {
-      const resp = await client.get(`/api/v1/configs/${id}`);
-      if (resp.status === 200) {
-        const env = resp.data as ConfigEnvelope;
-        setDetailEnvelope(env);
-        const cfg = env.config || {};
-        const mm = env.frpsmgr || ({} as MgrMeta);
-        const flat = flattenServerConfig(cfg as Record<string, unknown>);
-        form.resetFields();
-        form.setFieldsValue({
-          name: mm.name || '',
-          manualStart: mm.manualStart ?? false,
-          ...flat,
-        });
-      }
+      const resp = await client.get<ConfigEnvelope>(`/api/v1/configs/${id}`);
+      const env = resp.data;
+      form.setFieldsValue({
+        id: env.id,
+        name: env.cfdmgr?.name || env.name || env.id,
+        token: (env.config as Record<string, unknown>)?.token as string || '',
+        manualStart: env.cfdmgr?.manualStart ?? false,
+      });
+      setYamlText(configToYaml(env.config || {}));
     } catch {
       message.error('获取配置详情失败');
+      return;
     }
+    setModalOpen(true);
   };
 
-  // 加载 TOML 源码
-  const loadRawToml = async (id: string) => {
-    setTomlLoading(true);
+  const handleSave = async () => {
+    let values: EditFormValues;
     try {
-      const resp = await client.get(`/api/v1/configs/${id}/raw`);
-      if (resp.status === 200) {
-        setRawToml(resp.data || '');
-      }
+      values = await form.validateFields();
     } catch {
-      setRawToml('');
-    } finally {
-      setTomlLoading(false);
+      return;
     }
-  };
 
-  // 关闭实时日志 WebSocket
-  const disconnectMiniLogsWS = () => {
-    if (miniLogsWsRef.current) {
-      try { miniLogsWsRef.current.close(); } catch {/* ignore */}
-      miniLogsWsRef.current = null;
-    }
-    setMiniLogsWsState('closed');
-  };
+    // 从 YAML 解析 config（简单版）；token 字段覆盖
+    const parsed = parseSimpleYaml(yamlText);
+    if (values.token) parsed.token = values.token;
 
-  // 拉取历史日志 + WebSocket 实时尾追
-  const loadMiniLogs = async (id: string) => {
-    disconnectMiniLogsWS();
-    setMiniLogsLoading(true);
-    setMiniLogLines([]);
+    const cfdmgr: MgrMeta = {
+      name: values.name || (editingId ?? values.id),
+      manualStart: !!values.manualStart,
+    };
+
+    setSaving(true);
     try {
-      const resp = await client.get(`/api/v1/configs/${id}/logs?lines=${MINI_LOGS_MAX}`);
-      if (resp.status === 200) {
-        const data = resp.data;
-        const lines: string[] = Array.isArray(data?.lines) ? data.lines : (Array.isArray(data) ? data : []);
-        setMiniLogLines(lines.slice(-MINI_LOGS_MAX));
-      }
-    } catch {
-      // 日志文件不存在很正常（实例从未启动过）
-    } finally {
-      setMiniLogsLoading(false);
-    }
-
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const apiToken = getAPIToken();
-    const wsUrl = `${protocol}//${window.location.host}/api/v1/configs/${id}/logs/tail?token=${encodeURIComponent(apiToken || '')}`;
-    setMiniLogsWsState('connecting');
-    try {
-      const ws = new WebSocket(wsUrl);
-      miniLogsWsRef.current = ws;
-      ws.onopen = () => setMiniLogsWsState('connected');
-      ws.onmessage = (evt) => {
-        if (miniLogsPausedRef.current) return;
-        let line: string | null = null;
-        try {
-          const obj = JSON.parse(evt.data);
-          if (obj && typeof obj.line === 'string') line = obj.line;
-        } catch {
-          if (typeof evt.data === 'string') line = evt.data;
-        }
-        if (line === null) return;
-        setMiniLogLines((prev) => {
-          const next = prev.length >= MINI_LOGS_MAX ? prev.slice(prev.length - MINI_LOGS_MAX + 1) : prev.slice();
-          next.push(line!);
-          return next;
+      if (editingId) {
+        await client.put(`/api/v1/configs/${editingId}`, {
+          config: parsed,
+          cfdmgr,
         });
-      };
-      ws.onerror = () => setMiniLogsWsState('closed');
-      ws.onclose = () => setMiniLogsWsState('closed');
-    } catch {
-      setMiniLogsWsState('closed');
-    }
-  };
-
-  const handleClearMiniLogs = async (id: string) => {
-    if (!id) return;
-    try {
-      await client.delete(`/api/v1/configs/${id}/logs`);
-      setMiniLogLines([]);
-      message.success('日志已清空');
-    } catch (err: any) {
-      message.error('清空失败: ' + (err.response?.data?.error?.message || err.message));
-    }
-  };
-
-  useEffect(() => {
-    if (activeTab !== 'logs') {
-      disconnectMiniLogsWS();
-    }
-    return () => disconnectMiniLogsWS();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, activeConfigId]);
-
-  useEffect(() => {
-    if (miniLogsPaused) return;
-    miniLogsBottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
-  }, [miniLogLines, miniLogsPaused]);
-
-  const miniLogClass = (line: string): string => {
-    if (line.includes('[W]') || /\bwarn(ing)?\b/i.test(line)) return 'log-line log-warn';
-    if (line.includes('[E]') || /\berror\b|\bfailed\b/i.test(line)) return 'log-line log-error';
-    if (line.includes('[D]') || /\bdebug\b/i.test(line)) return 'log-line log-debug';
-    if (line.includes('[I]') || /\binfo\b/i.test(line)) return 'log-line log-info';
-    return 'log-line';
-  };
-
-  // 保存可视化配置：扁平表单值 → buildServerConfigPayload 折叠为嵌套 ServerConfig
-  // 并剪掉空字段/空对象，避免后端 DisallowUnknownFields 误杀。
-  //
-  // 关键点：
-  //   1. webServer 字段不在表单输入范围内（管理器接管），但保留 detailEnvelope.config.webServer
-  //      作为占位（mergeServerConfig 不在 MANAGED_TOP_KEYS 里删，会原样透传）。
-  //      worker 启动时会强制覆盖 webServer 为 loopback，所以保留旧值无副作用。
-  //   2. 透传 ServerConfig 顶层未知字段（如 enablePrometheus、metadatas、httpPlugins）：同上。
-  //   3. **清空字段 → 真清空**：mergeServerConfig 先从 baseCfg 删除所有 MANAGED_TOP_KEYS，
-  //      再 spread built。用户清空的字段在 built 里没有 key → 最终 payload 也没 →
-  //      Go 收到后用零值 → 后端真清空。修复了"清空字段无效"的 bug。
-  const handleSaveVisualConfig = async (values: ServerFormValues) => {
-    try {
-      const built = buildServerConfigPayload(values);
-      const cfg = mergeServerConfig(detailEnvelope?.config as Record<string, unknown> | undefined, built) as ServerConfig;
-
-      const frpsmgr: MgrMeta = {
-        name: values.name || activeConfigId,
-        manualStart: !!values.manualStart,
-      };
-      await client.put(`/api/v1/configs/${activeConfigId}`, { config: cfg, frpsmgr });
-      message.success('配置保存成功！');
-      fetchConfigs();
-      if (activeConfigId) loadVisualConfig(activeConfigId);
-    } catch (err: any) {
-      message.error('保存失败: ' + (err.response?.data?.error?.message || err.message || ''));
-    }
-  };
-
-  // 校验并保存 Raw TOML
-  const handleSaveRawToml = async () => {
-    setTomlLoading(true);
-    try {
-      const valResp = await client.post('/api/v1/validate', rawToml, {
-        headers: { 'Content-Type': 'application/toml' },
-      });
-      if (valResp.status === 200 && valResp.data?.valid === false) {
-        message.error('TOML 校验未通过: ' + ((valResp.data?.errors || []).join('; ') || '未知错误'));
-        return;
+        message.success('配置保存成功！');
+      } else {
+        await client.post('/api/v1/configs', {
+          id: values.id,
+          config: parsed,
+          cfdmgr,
+        });
+        message.success('配置创建成功！');
+        setActiveConfigId(values.id);
       }
-      await client.put(`/api/v1/configs/${activeConfigId}/raw`, rawToml, {
-        headers: { 'Content-Type': 'application/toml' },
-      });
-      message.success('TOML 校验并保存成功！');
+      setModalOpen(false);
       fetchConfigs();
-      if (activeConfigId) loadRawToml(activeConfigId);
-    } catch (err: any) {
-      message.error('保存失败: ' + (err.response?.data?.error?.message || 'TOML 语法校验未通过'));
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: { message?: string } } }; message?: string };
+      message.error('保存失败: ' + (e.response?.data?.error?.message || e.message || ''));
     } finally {
-      setTomlLoading(false);
+      setSaving(false);
     }
   };
 
-  // 新建配置：只发实际设置的字段（避免 DisallowUnknownFields 400）
-  const handleCreateConfig = async (values: NewConfigValues) => {
+  // ── 复制弹窗 ─────────────────────────────────────────────────────────────
+
+  const openDuplicate = (id: string) => {
+    setDupSourceId(id);
+    setDupNewId(`${id}_copy`);
+    setDupModalOpen(true);
+  };
+
+  const handleDuplicate = async () => {
+    if (!dupNewId.trim()) { message.warning('请输入新配置 ID'); return; }
     try {
-      const cfg: ServerConfig = {
-        bindAddr: values.bindAddr || undefined,
-        bindPort: values.bindPort || 7000,
-      };
-      if (values.authToken) {
-        cfg.auth = { method: 'token', token: values.authToken };
-      }
-      const frpsmgr: MgrMeta = {
-        name: values.name || values.id,
-        manualStart: !!values.manualStart,
-      };
-      await client.post('/api/v1/configs', { id: values.id, config: cfg, frpsmgr });
-      message.success('配置创建成功');
-      setNewConfigModalOpen(false);
-      newConfigForm.resetFields();
-      setActiveConfigId(values.id);
+      await client.post(`/api/v1/configs/${dupSourceId}/duplicate`, { new_id: dupNewId });
+      message.success(`已复制为: ${dupNewId}`);
+      setDupModalOpen(false);
       fetchConfigs();
-    } catch (err: any) {
-      message.error('创建失败: ' + (err.response?.data?.error?.message || err.message));
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: { message?: string } } }; message?: string };
+      message.error('复制失败: ' + (e.response?.data?.error?.message || e.message));
     }
   };
+
+  // ── 状态徽章 ─────────────────────────────────────────────────────────────
 
   const getStatusBadge = (state?: string) => {
     switch (state) {
       case 'started':
-        return <Badge status="success" text={<span style={{ color: '#52c41a' }}>正在运行</span>} />;
+        return <Badge status="success" text={<span style={{ color: '#52c41a' }}>运行中</span>} />;
       case 'starting':
         return <Badge status="processing" text={<span style={{ color: '#1677ff' }}>启动中</span>} />;
       case 'stopping':
         return <Badge status="processing" text={<span style={{ color: '#faad14' }}>停止中</span>} />;
       default:
-        return <Badge status="default" text={<span>未启动</span>} />;
+        return <Badge status="default" text="已停止" />;
     }
   };
 
-  const activeSnap = configs.find(c => c.id === activeConfigId);
+  const activeSnap = configs.find((c) => c.id === activeConfigId);
 
   return (
     <div style={{ height: '100%' }}>
-      <Row gutter={16} style={{ height: '100%', minHeight: '580px' }}>
+      <Row gutter={16} style={{ height: '100%', minHeight: 580 }}>
         {/* 左栏：实例列表 */}
-        <Col xs={24} md={compactList ? 5 : 8} style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 8 }}>
-            <Space size={6} style={{ minWidth: 0, flex: 1 }}>
-              <Tooltip title={compactList ? '展开列表' : '收起为紧凑列表'}>
-                <Button
-                  size="small"
-                  type="text"
-                  icon={compactList ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-                  onClick={toggleCompactList}
-                />
-              </Tooltip>
-              {!compactList && <Title level={4} style={{ margin: 0 }}>服务端列表</Title>}
-            </Space>
-            {compactList ? (
-              <Tooltip title="新建配置">
-                <Button type="primary" icon={<PlusOutlined />} onClick={() => setNewConfigModalOpen(true)} />
-              </Tooltip>
-            ) : (
-              <Button type="primary" icon={<PlusOutlined />} onClick={() => setNewConfigModalOpen(true)}>
-                新建配置
-              </Button>
-            )}
+        <Col xs={24} md={8} style={{ display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <Title level={4} style={{ margin: 0 }}>隧道实例</Title>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              新建
+            </Button>
           </div>
 
-          <div style={{ flex: 1, overflowY: 'auto', paddingRight: '4px' }}>
+          <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4 }}>
             {configs.length === 0 ? (
-              <Card style={{ textAlign: 'center', padding: compactList ? '20px 0' : '40px 0', borderRadius: 10 }}>
-                <Empty description={compactList ? '暂无配置' : '暂无 FRPS 服务端配置，点击右上角创建。'} />
+              <Card style={{ textAlign: 'center', padding: '40px 0', borderRadius: 10 }}>
+                <Empty description="暂无 cloudflared 隧道配置，点击右上角创建。" />
               </Card>
             ) : (
               <List
@@ -584,146 +369,76 @@ const Configs: React.FC = () => {
                 renderItem={(item) => {
                   const isActive = item.id === activeConfigId;
                   const isRunning = item.state === 'started';
-
-                  if (compactList) {
-                    return (
-                      <Dropdown menu={buildContextMenu(item)} trigger={['contextMenu']}>
-                        <Tooltip title={`${item.name || item.id} (ID: ${item.id}) · 右键可重启 / 克隆 / 导出 / 删除`} placement="right">
-                          <Card
-                            hoverable
-                            size="small"
-                            data-testid={`config-card-${item.id}`}
-                            style={{
-                              marginBottom: 8,
-                              cursor: 'pointer',
-                              border: `1px solid ${isActive ? token.colorPrimary : token.colorBorderSecondary}`,
-                              background: isActive ? token.colorPrimaryBg : token.colorBgContainer,
-                              borderRadius: 8,
-                            }}
-                            onClick={() => setActiveConfigId(item.id)}
-                            styles={{ body: { padding: '8px 10px' } }}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <Badge
-                                status={
-                                  item.state === 'started' ? 'success'
-                                  : item.state === 'starting' || item.state === 'stopping' ? 'processing'
-                                  : 'default'
-                                }
-                              />
-                              <Text strong ellipsis style={{ fontSize: 13, flex: 1, minWidth: 0 }}>
-                                {item.name || item.id}
-                              </Text>
-                              <Button
-                                size="small"
-                                type="text"
-                                icon={isRunning ? <StopOutlined /> : <PlayCircleOutlined />}
-                                loading={statusLoading[item.id]}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  isRunning ? handleStopInstance(item.id) : handleStartInstance(item.id);
-                                }}
-                                style={{ color: isRunning ? token.colorError : token.colorSuccess }}
-                              />
-                            </div>
-                          </Card>
-                        </Tooltip>
-                      </Dropdown>
-                    );
-                  }
-
                   return (
-                    <Dropdown menu={buildContextMenu(item)} trigger={['contextMenu']}>
-                      <Card
-                        hoverable
-                        data-testid={`config-card-${item.id}`}
-                        style={{
-                          marginBottom: 12,
-                          cursor: 'pointer',
-                          border: `1px solid ${isActive ? token.colorPrimary : token.colorBorderSecondary}`,
-                          background: isActive ? token.colorPrimaryBg : token.colorBgContainer,
-                          boxShadow: isActive ? `0 0 0 2px ${token.colorPrimaryBg}` : undefined,
-                          borderRadius: 10,
-                        }}
-                        onClick={() => setActiveConfigId(item.id)}
-                        styles={{ body: { padding: 16 } }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '8px' }}>
-                          <div>
-                            <Text strong style={{ fontSize: '15px' }}>{item.name || item.id}</Text>
-                            <div><Text type="secondary" style={{ fontSize: '12px' }}>ID: {item.id}</Text></div>
-                          </div>
-                          {getStatusBadge(item.state)}
+                    <Card
+                      hoverable
+                      style={{
+                        marginBottom: 12,
+                        cursor: 'pointer',
+                        border: `1px solid ${isActive ? themeToken.colorPrimary : themeToken.colorBorderSecondary}`,
+                        background: isActive ? themeToken.colorPrimaryBg : themeToken.colorBgContainer,
+                        borderRadius: 10,
+                      }}
+                      onClick={() => setActiveConfigId(item.id)}
+                      styles={{ body: { padding: 16 } }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 8 }}>
+                        <div>
+                          <Text strong style={{ fontSize: 15 }}>{item.name || item.id}</Text>
+                          <div><Text type="secondary" style={{ fontSize: 12 }}>ID: {item.id}</Text></div>
                         </div>
+                        {getStatusBadge(item.state)}
+                      </div>
 
-                        <div style={{ borderBottom: `1px solid ${token.colorBorderSecondary}`, margin: '8px 0' }} />
+                      <div style={{ borderBottom: `1px solid ${themeToken.colorBorderSecondary}`, margin: '8px 0' }} />
 
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <Space>
-                            {isRunning ? (
-                              <Button
-                                type="primary"
-                                danger
-                                size="small"
-                                icon={<StopOutlined />}
-                                onClick={(e) => { e.stopPropagation(); handleStopInstance(item.id); }}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Space>
+                          {isRunning ? (
+                            <Button type="primary" danger size="small" icon={<StopOutlined />}
+                              loading={statusLoading[item.id]}
+                              onClick={(e) => { e.stopPropagation(); handleStop(item.id); }}>
+                              停止
+                            </Button>
+                          ) : (
+                            <Button type="primary" size="small" icon={<PlayCircleOutlined />}
+                              loading={statusLoading[item.id]}
+                              style={{ background: '#52c41a', borderColor: '#52c41a' }}
+                              onClick={(e) => { e.stopPropagation(); handleStart(item.id); }}>
+                              启动
+                            </Button>
+                          )}
+                          {isRunning && (
+                            <Tooltip title="重启">
+                              <Button size="small" icon={<ReloadOutlined />}
                                 loading={statusLoading[item.id]}
-                              >
-                                停止
-                              </Button>
-                            ) : (
-                              <Button
-                                type="primary"
-                                size="small"
-                                icon={<PlayCircleOutlined />}
-                                onClick={(e) => { e.stopPropagation(); handleStartInstance(item.id); }}
-                                loading={statusLoading[item.id]}
-                                style={{ background: '#52c41a', borderColor: '#52c41a' }}
-                              >
-                                启动
-                              </Button>
-                            )}
-                            {isRunning && (
-                              <Tooltip title="重启 (reload)">
-                                <Button
-                                  size="small"
-                                  icon={<ReloadOutlined />}
-                                  onClick={(e) => { e.stopPropagation(); handleReloadInstance(item.id); }}
-                                  loading={statusLoading[item.id]}
-                                />
-                              </Tooltip>
-                            )}
-                          </Space>
-
-                          <Space>
-                            <Tooltip title="克隆配置">
-                              <Button
-                                size="small"
-                                type="text"
-                                icon={<CopyOutlined />}
-                                onClick={(e) => { e.stopPropagation(); handleDuplicateConfig(item.id); }}
-                              />
+                                onClick={(e) => { e.stopPropagation(); handleReload(item.id); }} />
                             </Tooltip>
-                            <Popconfirm
-                              title="确定要删除这个配置吗？"
-                              description="删除后该 FRPS 服务端配置无法恢复。"
-                              onConfirm={() => handleDeleteConfig(item.id)}
-                              onPopupClick={(e) => e.stopPropagation()}
-                              okText="确定"
-                              cancelText="取消"
-                            >
-                              <Button
-                                size="small"
-                                type="text"
-                                danger
-                                icon={<DeleteOutlined />}
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                            </Popconfirm>
-                          </Space>
-                        </div>
-                      </Card>
-                    </Dropdown>
+                          )}
+                        </Space>
+
+                        <Space>
+                          <Tooltip title="编辑配置">
+                            <Button size="small" type="text" icon={<EditOutlined />}
+                              onClick={(e) => { e.stopPropagation(); openEdit(item.id); }} />
+                          </Tooltip>
+                          <Tooltip title="克隆配置">
+                            <Button size="small" type="text" icon={<CopyOutlined />}
+                              onClick={(e) => { e.stopPropagation(); openDuplicate(item.id); }} />
+                          </Tooltip>
+                          <Popconfirm
+                            title={`确定删除「${item.name || item.id}」？`}
+                            description="删除后不可恢复。"
+                            onConfirm={() => handleDelete(item.id)}
+                            onPopupClick={(e) => e.stopPropagation()}
+                            okText="删除" okType="danger" cancelText="取消"
+                          >
+                            <Button size="small" type="text" danger icon={<DeleteOutlined />}
+                              onClick={(e) => e.stopPropagation()} />
+                          </Popconfirm>
+                        </Space>
+                      </div>
+                    </Card>
                   );
                 }}
               />
@@ -731,235 +446,174 @@ const Configs: React.FC = () => {
           </div>
         </Col>
 
-        {/* 右栏：工作台面板 */}
-        <Col xs={24} md={compactList ? 19 : 16}>
+        {/* 右栏：实例详情 */}
+        <Col xs={24} md={16}>
           {activeConfigId ? (
-            <Card
-              bordered={false}
-              styles={{ body: { padding: 20 } }}
-              style={{ height: '100%', minHeight: '520px', display: 'flex', flexDirection: 'column', borderRadius: 10 }}
-            >
-              <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Card bordered={false} styles={{ body: { padding: 20 } }}
+              style={{ height: '100%', minHeight: 520, borderRadius: 10 }}>
+              <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <Text type="secondary" style={{ fontSize: '12px' }}>当前操作实例</Text>
-                  <Title level={4} style={{ margin: '4px 0 0 0' }}>
-                    {activeSnap?.name || activeConfigId}
-                  </Title>
+                  <Text type="secondary" style={{ fontSize: 12 }}>当前实例</Text>
+                  <Title level={4} style={{ margin: '4px 0 0 0' }}>{activeSnap?.name || activeConfigId}</Title>
                 </div>
-                <div>{getStatusBadge(activeSnap?.state)}</div>
+                <Space>
+                  {getStatusBadge(activeSnap?.state)}
+                  <Button icon={<EditOutlined />} onClick={() => openEdit(activeConfigId)}>
+                    编辑配置
+                  </Button>
+                </Space>
               </div>
 
-              <Tabs
-                activeKey={activeTab}
-                onChange={setActiveTab}
-                items={[
-                  {
-                    key: 'visual',
-                    label: <Space><EditOutlined />常规配置 (可视化)</Space>,
-                    children: (
-                      <Form
-                        form={form}
-                        layout="vertical"
-                        onFinish={handleSaveVisualConfig}
-                        style={{ marginTop: '12px' }}
-                      >
-                        <ServerConfigGroups
-                          envelopeWebServer={(detailEnvelope?.config?.webServer as WebServerInfo | undefined)}
-                          themeBorderColor={token.colorBorderSecondary}
-                          logPath={detailEnvelope?.log_path}
-                        />
-                      </Form>
-                    ),
-                  },
-                  {
-                    key: 'toml',
-                    label: <Space><CodeOutlined />高级 TOML 配置</Space>,
-                    children: (
-                      <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', gap: 12, flexWrap: 'wrap' }}>
-                          <Space size={8}>
-                            <Tag color="cyan" bordered={false}>TOML</Tag>
-                            <Text type="secondary" style={{ fontSize: 12 }}>
-                              CodeMirror 编辑器 · 语法高亮 · Ctrl+F 搜索 · 保存时自动调用 /validate
-                            </Text>
-                          </Space>
-                          <Space>
-                            <Tooltip title="刷新读取磁盘上的 TOML">
-                              <Button
-                                size="small"
-                                icon={<ReloadOutlined />}
-                                onClick={() => loadRawToml(activeConfigId)}
-                                loading={tomlLoading}
-                              />
-                            </Tooltip>
-                            <Button
-                              type="primary"
-                              icon={<CheckCircleOutlined />}
-                              onClick={handleSaveRawToml}
-                              loading={tomlLoading}
-                              style={{ background: '#52c41a', borderColor: '#52c41a' }}
-                            >
-                              校验并保存
-                            </Button>
-                          </Space>
-                        </div>
-                        <div
-                          style={{
-                            border: `1px solid ${themeMode === 'dark' ? token.colorBorderSecondary : '#1f2933'}`,
-                            borderRadius: 8,
-                            overflow: 'hidden',
-                            background: '#0b0f14',
-                            boxShadow: 'inset 0 2px 8px rgba(0,0,0,0.5)',
-                          }}
-                        >
-                          <CodeMirror
-                            value={rawToml}
-                            onChange={(v) => setRawToml(v)}
-                            theme={oneDark}
-                            extensions={tomlExtensions}
-                            height="calc(100vh - 320px)"
-                            minHeight="420px"
-                            maxHeight="78vh"
-                            basicSetup={{
-                              lineNumbers: true,
-                              foldGutter: true,
-                              highlightActiveLine: true,
-                              highlightActiveLineGutter: true,
-                              bracketMatching: true,
-                              closeBrackets: true,
-                              autocompletion: false,
-                              tabSize: 2,
-                              searchKeymap: true,
-                            }}
-                            style={{ fontSize: 13 }}
-                          />
-                        </div>
-                      </div>
-                    ),
-                  },
-                  {
-                    key: 'logs',
-                    label: <Space><EditOutlined />运行日志速览</Space>,
-                    children: (
-                      <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', gap: 12, flexWrap: 'wrap' }}>
-                          <Space size={10}>
-                            <Badge
-                              status={
-                                miniLogsWsState === 'connected' ? 'success'
-                                : miniLogsWsState === 'connecting' ? 'processing'
-                                : 'default'
-                              }
-                              text={
-                                <Text type="secondary" style={{ fontSize: 12 }}>
-                                  {miniLogsWsState === 'connected' ? '实时流接通'
-                                    : miniLogsWsState === 'connecting' ? '正在连接…'
-                                    : '已断开'} · 最近 {MINI_LOGS_MAX} 行
-                                </Text>
-                              }
-                            />
-                          </Space>
-                          <Space>
-                            <Switch
-                              size="small"
-                              checked={miniLogsPaused}
-                              onChange={setMiniLogsPaused}
-                              checkedChildren="已暂停"
-                              unCheckedChildren="实时滚动"
-                            />
-                            <Button size="small" icon={<DeleteOutlined />} onClick={() => handleClearMiniLogs(activeConfigId)}>
-                              清空
-                            </Button>
-                            <Button size="small" icon={<ReloadOutlined />} onClick={() => loadMiniLogs(activeConfigId)}>
-                              重连
-                            </Button>
-                          </Space>
-                        </div>
-                        {miniLogsLoading && miniLogLines.length === 0 ? (
-                          <div style={{ opacity: 0.5, padding: 16, textAlign: 'center' }}>加载中…</div>
-                        ) : (
-                          <div
-                            className="terminal-container"
-                            style={{
-                              height: 'calc(100vh - 320px)',
-                              minHeight: 420,
-                              maxHeight: '78vh',
-                              margin: 0,
-                              overflowY: 'auto',
-                              position: 'relative',
-                            }}
-                          >
-                            {miniLogLines.length === 0 ? (
-                              <div style={{ opacity: 0.5, padding: 16, textAlign: 'center' }}>
-                                暂无日志，等待 FRPS 输出…
-                              </div>
-                            ) : (
-                              <>
-                                {miniLogLines.map((line, idx) => (
-                                  <div key={idx} className={miniLogClass(line)}>{line}</div>
-                                ))}
-                                <div ref={miniLogsBottomRef} />
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ),
-                  },
-                ]}
-              />
+              <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>ID</Text>
+                  <div><Text code>{activeSnap?.id}</Text></div>
+                </div>
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>状态</Text>
+                  <div>
+                    <Tag color={
+                      activeSnap?.state === 'started' ? 'success' :
+                      activeSnap?.state === 'starting' || activeSnap?.state === 'stopping' ? 'processing' :
+                      'default'
+                    }>
+                      {activeSnap?.state || 'stopped'}
+                    </Tag>
+                  </div>
+                </div>
+                {activeSnap?.last_error && (
+                  <div>
+                    <Text type="secondary" style={{ fontSize: 12 }}>最近错误</Text>
+                    <div><Text type="danger" style={{ fontSize: 12 }}>{activeSnap.last_error}</Text></div>
+                  </div>
+                )}
+                {activeSnap?.started_at && (
+                  <div>
+                    <Text type="secondary" style={{ fontSize: 12 }}>启动时间</Text>
+                    <div><Text style={{ fontSize: 12 }}>{activeSnap.started_at}</Text></div>
+                  </div>
+                )}
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>配置文件路径</Text>
+                  <div><Text code style={{ fontSize: 12 }}>{activeSnap?.path || '—'}</Text></div>
+                </div>
+              </Space>
+
+              <div style={{ marginTop: 24, display: 'flex', gap: 8 }}>
+                {activeSnap?.state !== 'started' ? (
+                  <Button type="primary" icon={<PlayCircleOutlined />}
+                    style={{ background: '#52c41a', borderColor: '#52c41a' }}
+                    onClick={() => handleStart(activeConfigId)}>
+                    启动
+                  </Button>
+                ) : (
+                  <>
+                    <Button type="primary" danger icon={<StopOutlined />}
+                      onClick={() => handleStop(activeConfigId)}>停止</Button>
+                    <Button icon={<ReloadOutlined />} onClick={() => handleReload(activeConfigId)}>重启</Button>
+                  </>
+                )}
+                <Popconfirm
+                  title={`确定删除「${activeSnap?.name || activeConfigId}」？`}
+                  onConfirm={() => handleDelete(activeConfigId)}
+                  okText="删除" okType="danger" cancelText="取消"
+                >
+                  <Button danger icon={<DeleteOutlined />}>删除</Button>
+                </Popconfirm>
+              </div>
             </Card>
           ) : (
             <Card style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '100px 0', borderRadius: 10 }}>
-              <Empty description="请在左侧选择或创建一个 FRPS 服务端配置。" />
+              <Empty description="请在左侧选择或创建一个 cloudflared 隧道配置。" />
             </Card>
           )}
         </Col>
       </Row>
 
-      {/* 新建配置 Modal */}
+      {/* 新建 / 编辑 Modal */}
       <Modal
-        title="新建 FRPS 服务端配置"
-        open={newConfigModalOpen}
-        onCancel={() => setNewConfigModalOpen(false)}
-        maskClosable={false}
-        footer={null}
+        title={editingId ? `编辑配置 — ${editingId}` : '新建 cloudflared 隧道配置'}
+        open={modalOpen}
+        onOk={handleSave}
+        confirmLoading={saving}
+        onCancel={() => setModalOpen(false)}
+        okText="保存" cancelText="取消"
         destroyOnClose
+        width={720}
       >
-        <Form form={newConfigForm} layout="vertical" onFinish={handleCreateConfig}>
-          <Form.Item
-            label="唯一ID标识 (必须为纯英文/数字/下划线)"
-            name="id"
-            rules={[
-              { required: true, message: '请输入配置ID' },
-              { pattern: /^[a-zA-Z0-9_-]+$/, message: '仅支持英文字母、数字、下划线及中划线' },
-            ]}
-          >
-            <Input placeholder="例如: edge_server" />
+        <Form form={form} layout="vertical" style={{ marginTop: 8 }}>
+          {!editingId && (
+            <Form.Item
+              label="唯一 ID（纯英文/数字/下划线/中划线）"
+              name="id"
+              rules={[
+                { required: true, message: '请输入配置 ID' },
+                { pattern: /^[a-zA-Z0-9_-]+$/, message: '仅支持英文字母、数字、下划线及中划线' },
+              ]}
+            >
+              <Input placeholder="例如: my-tunnel" />
+            </Form.Item>
+          )}
+          <Form.Item label="显示名称" name="name">
+            <Input placeholder="例如: 生产隧道" />
           </Form.Item>
-          <Form.Item label="显示名称备注" name="name">
-            <Input placeholder="例如: 公司边缘节点" />
-          </Form.Item>
-          <Form.Item label="监听地址 (bindAddr)" name="bindAddr" initialValue="0.0.0.0">
-            <Input placeholder="0.0.0.0" />
-          </Form.Item>
-          <Form.Item label="监听端口 (bindPort)" name="bindPort" initialValue={7000}>
-            <InputNumber min={1} max={65535} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item label="Token 密钥 (auth.token)" name="authToken">
-            <Input.Password placeholder="客户端连接此服务端使用的密钥，可空" />
+          <Form.Item label="Cloudflared Token（覆盖 YAML 中 token 字段）" name="token">
+            <Input.Password placeholder="留空则以 YAML 中 token 为准" />
           </Form.Item>
           <Form.Item label="手动启动" name="manualStart" valuePropName="checked" initialValue={false}>
             <Switch checkedChildren="手动启动" unCheckedChildren="随服务启动" />
           </Form.Item>
-          <Form.Item style={{ textAlign: 'right', marginBottom: 0 }}>
-            <Space>
-              <Button onClick={() => setNewConfigModalOpen(false)}>取消</Button>
-              <Button type="primary" htmlType="submit">创建</Button>
-            </Space>
+          <Form.Item label="YAML 配置（完整 cloudflared 配置）">
+            <div
+              style={{
+                border: `1px solid ${themeMode === 'dark' ? themeToken.colorBorderSecondary : '#1f2933'}`,
+                borderRadius: 8,
+                overflow: 'hidden',
+                background: '#0b0f14',
+              }}
+            >
+              <CodeMirror
+                value={yamlText}
+                onChange={setYamlText}
+                theme={oneDark}
+                extensions={yamlExtensions}
+                height="300px"
+                basicSetup={{
+                  lineNumbers: true,
+                  foldGutter: true,
+                  highlightActiveLine: true,
+                  bracketMatching: true,
+                  autocompletion: false,
+                  tabSize: 2,
+                }}
+              />
+            </div>
           </Form.Item>
         </Form>
       </Modal>
+
+      {/* 复制 Modal */}
+      <Modal
+        title={`克隆配置 — ${dupSourceId}`}
+        open={dupModalOpen}
+        onOk={handleDuplicate}
+        onCancel={() => setDupModalOpen(false)}
+        okText="确认克隆" cancelText="取消"
+        destroyOnClose
+      >
+        <Form layout="vertical" style={{ marginTop: 8 }}>
+          <Form.Item label="新配置的唯一 ID">
+            <Input
+              value={dupNewId}
+              onChange={(e) => setDupNewId(e.target.value)}
+              placeholder="例如: my-tunnel_copy"
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* ExclamationCircleOutlined 仅 Modal.confirm 用到，保留 import 消除 lint 警告 */}
+      <span style={{ display: 'none' }}><ExclamationCircleOutlined /></span>
     </div>
   );
 };
