@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/mia-clark/cloudflared-manager/internal/manager"
 	"github.com/mia-clark/cloudflared-manager/pkg/cfdconfig"
@@ -21,12 +22,45 @@ func NewConfigsHandler(m *manager.Manager, log *slog.Logger) *ConfigsHandler {
 	return &ConfigsHandler{m: m, log: log}
 }
 
-// configEnvelope wraps an instance snapshot, the full TunnelConfigV1 and
-// the manager-level metadata (name/manualStart) in one response body.
+// configEnvelope wraps an instance snapshot, the TunnelConfigV1 and the
+// manager-level metadata (name/manualStart) in one response body.
+//
+// SECURITY: the embedded Config NEVER carries the plaintext connector
+// token in API responses — it is stripped by newEnvelope. HasToken tells
+// the UI whether a token is stored without revealing it; the masked form
+// is available via GET /configs/{id}/token.
 type configEnvelope struct {
 	manager.Snapshot
-	Config *cfdconfig.TunnelConfigV1 `json:"config"`
-	Cfdmgr manager.MgrMeta           `json:"cfdmgr"`
+	Config   *cfdconfig.TunnelConfigV1 `json:"config"`
+	Cfdmgr   manager.MgrMeta           `json:"cfdmgr"`
+	HasToken bool                      `json:"has_token"`
+}
+
+// newEnvelope builds a response envelope with the connector token stripped
+// from the config body (see tunnel.go: the token MUST NOT leak through any
+// envelope-returning endpoint). The original sc is left untouched.
+func newEnvelope(snap manager.Snapshot, sc *cfdconfig.TunnelConfigV1, mm manager.MgrMeta) configEnvelope {
+	hasToken := sc != nil && sc.Token != ""
+	var redacted *cfdconfig.TunnelConfigV1
+	if sc != nil {
+		cp := *sc // shallow copy is enough: we only overwrite the scalar Token field
+		cp.Token = ""
+		redacted = &cp
+	}
+	return configEnvelope{Snapshot: snap, Config: redacted, Cfdmgr: mm, HasToken: hasToken}
+}
+
+// maskToken returns a non-reversible preview of a connector token suitable
+// for display (first 4 + bullets + last 4). Short tokens are fully masked.
+func maskToken(t string) string {
+	n := len(t)
+	if n == 0 {
+		return ""
+	}
+	if n <= 8 {
+		return strings.Repeat("•", n)
+	}
+	return t[:4] + "••••••••" + t[n-4:]
 }
 
 // createReq is the input body for POST /configs.
@@ -48,7 +82,28 @@ func (h *ConfigsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if writeManagerError(w, err) {
 		return
 	}
-	WriteJSON(w, http.StatusOK, configEnvelope{Snapshot: snap, Config: sc, Cfdmgr: mm})
+	WriteJSON(w, http.StatusOK, newEnvelope(snap, sc, mm))
+}
+
+// Token returns a masked preview of the stored connector token. The
+// plaintext token is never served by any endpoint.
+//
+// GET /api/v1/configs/{id}/token
+func (h *ConfigsHandler) Token(w http.ResponseWriter, r *http.Request) {
+	id := pathID(r)
+	_, sc, _, err := h.m.Get(id)
+	if writeManagerError(w, err) {
+		return
+	}
+	tok := ""
+	if sc != nil {
+		tok = sc.Token
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"has_token": tok != "",
+		"masked":    maskToken(tok),
+		"length":    len(tok),
+	})
 }
 
 // Create persists a new config from the supplied TunnelConfigV1 body.
@@ -65,7 +120,7 @@ func (h *ConfigsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snap, sc, mm, _ := h.m.Get(req.ID)
-	WriteJSON(w, http.StatusCreated, configEnvelope{Snapshot: snap, Config: sc, Cfdmgr: mm})
+	WriteJSON(w, http.StatusCreated, newEnvelope(snap, sc, mm))
 }
 
 // Update replaces the whole config body for an existing instance.
@@ -82,11 +137,20 @@ func (h *ConfigsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, CodeBadRequest, "config is required", nil)
 		return
 	}
+	// Token preservation: API responses no longer echo the token, so the UI
+	// submits an empty token to mean "keep the existing one". Only an
+	// explicit non-empty token replaces the stored secret. (Clearing a token
+	// is a power-user action done via the raw YAML endpoint.)
+	if body.Config.Token == "" {
+		if _, cur, _, gerr := h.m.Get(id); gerr == nil && cur != nil && cur.Token != "" {
+			body.Config.Token = cur.Token
+		}
+	}
 	if err := h.m.Update(id, body.Config, body.Cfdmgr); writeManagerError(w, err) {
 		return
 	}
 	snap, sc, mm, _ := h.m.Get(id)
-	WriteJSON(w, http.StatusOK, configEnvelope{Snapshot: snap, Config: sc, Cfdmgr: mm})
+	WriteJSON(w, http.StatusOK, newEnvelope(snap, sc, mm))
 }
 
 // Patch applies a JSON merge over the existing TunnelConfigV1 body. The
@@ -122,7 +186,7 @@ func (h *ConfigsHandler) Patch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snap, fresh, freshMM, _ := h.m.Get(id)
-	WriteJSON(w, http.StatusOK, configEnvelope{Snapshot: snap, Config: fresh, Cfdmgr: freshMM})
+	WriteJSON(w, http.StatusOK, newEnvelope(snap, fresh, freshMM))
 }
 
 // Delete stops and removes an instance.
@@ -158,7 +222,7 @@ func (h *ConfigsHandler) Duplicate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snap, fresh, freshMM, _ := h.m.Get(body.NewID)
-	WriteJSON(w, http.StatusCreated, configEnvelope{Snapshot: snap, Config: fresh, Cfdmgr: freshMM})
+	WriteJSON(w, http.StatusCreated, newEnvelope(snap, fresh, freshMM))
 }
 
 // GetRaw returns the on-disk YAML bytes verbatim.
@@ -184,7 +248,7 @@ func (h *ConfigsHandler) PutRaw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snap, sc, mm, _ := h.m.Get(id)
-	WriteJSON(w, http.StatusOK, configEnvelope{Snapshot: snap, Config: sc, Cfdmgr: mm})
+	WriteJSON(w, http.StatusOK, newEnvelope(snap, sc, mm))
 }
 
 // Reorder persists the user's chosen display order.

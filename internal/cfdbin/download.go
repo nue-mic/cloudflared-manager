@@ -117,7 +117,11 @@ func (s *Store) Install(ctx context.Context, d *Downloader, version string) (Ver
 	if api == "" {
 		api = DefaultGitHubAPI
 	}
-	body, err := d.getGitHubJSON(ctx, api+"/releases/tags/"+version)
+	relURL := api + "/releases/tags/" + version
+	if v := strings.TrimSpace(version); v == "" || v == "latest" {
+		relURL = api + "/releases/latest" // resolve the floating "latest" tag
+	}
+	body, err := d.getGitHubJSON(ctx, relURL)
 	if err != nil {
 		return VersionMeta{}, fmt.Errorf("release lookup: %w", err)
 	}
@@ -132,6 +136,10 @@ func (s *Store) Install(ctx context.Context, d *Downloader, version string) (Ver
 	if err := json.Unmarshal(body, &rel); err != nil {
 		return VersionMeta{}, fmt.Errorf("decode release: %w", err)
 	}
+	if strings.TrimSpace(rel.TagName) == "" {
+		return VersionMeta{}, fmt.Errorf("release %q has no tag_name", version)
+	}
+	version = rel.TagName // pin to the concrete tag (also resolves "latest")
 	wantSHA := ParseSHA256(rel.Body, assetName)
 	if wantSHA == "" {
 		return VersionMeta{}, fmt.Errorf("release %s has no SHA256 for %s", version, assetName)
@@ -159,7 +167,11 @@ func (s *Store) Install(ctx context.Context, d *Downloader, version string) (Ver
 	if err != nil {
 		return VersionMeta{}, fmt.Errorf("download: %w", err)
 	}
-	if sha != wantSHA {
+	// For RAW assets (linux/windows) the release-body checksum is the sha of
+	// the bare downloaded file, so gate here. For ARCHIVE assets (darwin
+	// .tgz) the body checksum is the sha of the binary INSIDE the tarball,
+	// not the archive itself — that is verified after extraction below.
+	if !IsArchive(assetName) && sha != wantSHA {
 		return VersionMeta{}, fmt.Errorf("sha256 mismatch: got %s want %s", sha, wantSHA)
 	}
 
@@ -168,10 +180,22 @@ func (s *Store) Install(ctx context.Context, d *Downloader, version string) (Ver
 		return VersionMeta{}, err
 	}
 	finalBin := s.binaryPath(version)
+	verifiedSHA := sha
 	if IsArchive(assetName) {
 		if err := extractDarwinTGZ(tmp.Name(), finalBin); err != nil {
+			_ = os.RemoveAll(s.versionDir(version))
 			return VersionMeta{}, fmt.Errorf("extract: %w", err)
 		}
+		innerSHA, herr := sha256File(finalBin)
+		if herr != nil {
+			_ = os.RemoveAll(s.versionDir(version))
+			return VersionMeta{}, fmt.Errorf("hash extracted binary: %w", herr)
+		}
+		if innerSHA != wantSHA {
+			_ = os.RemoveAll(s.versionDir(version))
+			return VersionMeta{}, fmt.Errorf("sha256 mismatch (extracted binary): got %s want %s", innerSHA, wantSHA)
+		}
+		verifiedSHA = innerSHA // persist the sha that actually matched the release body
 	} else {
 		if err := os.Rename(tmp.Name(), finalBin); err != nil {
 			// cross-device rename can fail; fall back to copy
@@ -191,7 +215,7 @@ func (s *Store) Install(ctx context.Context, d *Downloader, version string) (Ver
 		Platform:     runtime.GOOS,
 		Arch:         runtime.GOARCH,
 		AssetName:    assetName,
-		SHA256:       sha,
+		SHA256:       verifiedSHA,
 		SourceURL:    directURL,
 		Mirror:       mirror,
 		DownloadedAt: time.Now().UTC(),
@@ -298,6 +322,21 @@ func (d *Downloader) getGitHubJSON(ctx context.Context, url string) ([]byte, err
 		return nil, fmt.Errorf("github api %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+}
+
+// sha256File computes the hex sha256 of a file on disk. Used to verify the
+// binary extracted from a .tgz archive against the release-body checksum.
+func sha256File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // copyFile is a tiny cross-device-safe rename fallback.

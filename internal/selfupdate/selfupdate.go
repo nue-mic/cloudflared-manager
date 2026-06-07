@@ -32,10 +32,11 @@ const (
 
 // apiMirrors are prepended to the GitHub API URL when a direct request fails
 // (helpful from networks where api.github.com is blocked). They mirror the
-// same hosts install.sh uses for release downloads.
+// CFDM_DOWNLOAD_MIRRORS default used by the binary downloader so the two
+// GitHub-proxy paths stay consistent.
 var apiMirrors = []string{
+	"https://gh-proxy.org/",
 	"https://gh-proxy.com/",
-	"https://ghfast.top/",
 }
 
 // Release is the subset of a GitHub release surfaced to the UI.

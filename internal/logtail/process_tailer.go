@@ -34,6 +34,11 @@ type ProcessTailer struct {
 
 	stopped atomic.Bool
 
+	// writeMu serializes Write so the two io.Copy goroutines (stdout +
+	// stderr) cannot race on the tail buffer. It must NOT be taken inside
+	// append() — append() locks mu, and Write calls append() while holding
+	// writeMu, so the two locks are strictly ordered writeMu → mu.
+	writeMu sync.Mutex
 	// tail holds bytes received via Write that have not yet been
 	// terminated by a newline; flushed on the next Write call.
 	tail []byte
@@ -379,6 +384,8 @@ func (p *ProcessTailer) Write(b []byte) (int, error) {
 	if p.stopped.Load() {
 		return len(b), nil
 	}
+	p.writeMu.Lock()
+	defer p.writeMu.Unlock()
 	rem := append(p.tail, b...) //nolint:gocritic // intentional: grow tail
 	p.tail = p.tail[:0]
 	for {

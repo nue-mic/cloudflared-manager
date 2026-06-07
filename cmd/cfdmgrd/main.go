@@ -114,8 +114,8 @@ func runServe(args []string) int {
 	defer mgr.Shutdown()
 
 	// 时序指标存储 + 采样器：纯 Go SQLite，落 $DataDir/metrics.db。
-	// 注意：当前 sampler 内部仍指向旧 worker 的 loopback 读取路径（PR-01 不动业务逻辑）。
-	// 这条路径将由后续 PR 替换：PR-04 改 worker → PR-07 改 sampler 拉 cloudflared --metrics。
+	// 采样器每 interval 拉取每个运行中实例的 cloudflared --metrics 端点，
+	// 解析 Prometheus 文本，写入 TrafficPoint，并评估告警规则。
 	mstore, err := metrics.Open(filepath.Join(cfg.DataDir, "metrics.db"))
 	if err != nil {
 		logger.Warn("metrics store disabled", slog.Any("err", err))

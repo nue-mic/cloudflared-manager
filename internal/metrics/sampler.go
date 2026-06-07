@@ -27,13 +27,14 @@ type InstanceSource interface {
 // Sampler periodically scrapes each running instance's cloudflared
 // /metrics endpoint, decodes the Prometheus text payload via
 // ParsePromText, computes interval deltas for counter-type metrics,
-// writes a small TrafficPoint per (instance, scope, key), and keeps
-// the alert state machine ticking.
+// writes a small TrafficPoint per (instance, scope, key), and evaluates
+// the alert rules each tick.
 //
-// PR-07 keeps the alert evaluator dormant: rules in the DB sit
-// untouched until PR-08 finalises the metric vocabulary used by the
-// UI rule editor. tick() still drains rules from the store on each
-// cycle so that publishAlert / postWebhook stay exercised by tests.
+// NOTE on the TrafficPoint In/Out columns: cloudflared exposes no per-tunnel
+// byte counter, so the server-scope "In" carries the HTTP request-count
+// delta and "Out" the error-count delta (NOT bytes). The alert metrics are
+// named accordingly: conns | requests_rate | errors_rate (the older
+// traffic_in_rate / traffic_out_rate names are accepted as aliases).
 type Sampler struct {
 	store    *Store
 	src      InstanceSource
@@ -265,9 +266,9 @@ func (s *Sampler) evalRules(rules []AlertRule, instID, target string, conns int6
 		switch r.Metric {
 		case "conns":
 			value = float64(conns)
-		case "traffic_in_rate":
+		case "requests_rate", "traffic_in_rate": // pt.In carries request-count deltas
 			value = float64(pt.In) / float64(stepSec)
-		case "traffic_out_rate":
+		case "errors_rate", "traffic_out_rate": // pt.Out carries error-count deltas
 			value = float64(pt.Out) / float64(stepSec)
 		default:
 			continue

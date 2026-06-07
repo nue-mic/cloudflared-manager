@@ -56,7 +56,7 @@ func NewRouter(d Deps) http.Handler {
 	imex := NewImportExportHandler(d.Manager, d.Logger)
 	mh := NewMetricsHandler(d.Metrics)
 	upd := NewUpdateHandler(d.Cfg.DataDir, d.Cfg.SelfUpdateEnabled, d.Logger)
-	binaries := NewBinariesHandler(d.BinaryStore, d.BinaryDownloader, d.Logger)
+	binaries := NewBinariesHandler(d.BinaryStore, d.BinaryDownloader, d.Cfg.CloudflaredDefaultVersion, d.Logger)
 
 	// Authenticated subtree.
 	r.Group(func(r chi.Router) {
@@ -75,6 +75,7 @@ func NewRouter(d Deps) http.Handler {
 		r.Post("/api/v1/configs/{id}/duplicate", configs.Duplicate)
 		r.Get("/api/v1/configs/{id}/raw", configs.GetRaw)
 		r.Put("/api/v1/configs/{id}/raw", configs.PutRaw)
+		r.Get("/api/v1/configs/{id}/token", configs.Token)
 
 		r.Post("/api/v1/configs/{id}/start", life.Start)
 		r.Post("/api/v1/configs/{id}/stop", life.Stop)

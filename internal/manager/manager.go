@@ -395,6 +395,29 @@ func (m *Manager) Reorder(order []string) error {
 // ProfilesDir reports the directory the manager owns.
 func (m *Manager) ProfilesDir() string { return m.opts.ProfilesDir }
 
+// MetaPath reports the path of the daemon meta.json file (display names,
+// manual-start flags, ordering). Used by the export bundle.
+func (m *Manager) MetaPath() string { return m.opts.MetaPath }
+
+// ImportMeta applies display names / manual-start flags / ordering from an
+// imported meta.json, but ONLY for ids that currently exist — so restoring a
+// backup cannot resurrect metadata for configs that were not also restored.
+func (m *Manager) ImportMeta(names map[string]string, manual map[string]bool, order []string) {
+	for id, n := range names {
+		if m.Exists(id) {
+			_ = m.meta.setName(id, n)
+		}
+	}
+	for id, v := range manual {
+		if m.Exists(id) {
+			_ = m.meta.setManualStart(id, v)
+		}
+	}
+	if len(order) > 0 {
+		_ = m.Reorder(order) // Reorder already filters to known ids
+	}
+}
+
 // LogPath returns the per-instance log file path.
 func (m *Manager) LogPath(id string) string {
 	return filepath.Join(m.opts.LogsDir, id+".log")

@@ -85,6 +85,16 @@ func (s *metaStore) snapshot() Meta {
 	for k, v := range s.data.LogViewSince {
 		m.LogViewSince[k] = v
 	}
+	// Deep-copy Names/Manual too, otherwise the snapshot shares the live
+	// maps and a caller mutating them would corrupt the store.
+	m.Names = make(map[string]string, len(s.data.Names))
+	for k, v := range s.data.Names {
+		m.Names[k] = v
+	}
+	m.Manual = make(map[string]bool, len(s.data.Manual))
+	for k, v := range s.data.Manual {
+		m.Manual[k] = v
+	}
 	return m
 }
 

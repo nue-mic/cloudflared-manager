@@ -21,6 +21,31 @@ func NewMetricsHandler(store *metrics.Store) *MetricsHandler {
 	return &MetricsHandler{store: store}
 }
 
+// Allowed alert metric/op vocabularies. The sampler evaluator (see
+// internal/metrics/sampler.go evalRules) only understands these metrics;
+// "traffic_in_rate"/"traffic_out_rate" are retained as legacy aliases of
+// the honestly-named "requests_rate"/"errors_rate".
+var validAlertMetrics = map[string]bool{
+	"conns": true, "requests_rate": true, "errors_rate": true,
+	"traffic_in_rate": true, "traffic_out_rate": true,
+}
+var validAlertOps = map[string]bool{">": true, ">=": true, "<": true, "<=": true}
+
+// validateAlertRule returns ("", true) when the rule is acceptable, else a
+// human-readable reason and false.
+func validateAlertRule(name, metric, op string) (string, bool) {
+	if name == "" || metric == "" || op == "" {
+		return "name, metric and op are required", false
+	}
+	if !validAlertMetrics[metric] {
+		return "unsupported metric (use conns|requests_rate|errors_rate)", false
+	}
+	if !validAlertOps[op] {
+		return "unsupported op (use >|>=|<|<=)", false
+	}
+	return "", true
+}
+
 func (h *MetricsHandler) ready(w http.ResponseWriter) bool {
 	if h.store == nil {
 		WriteError(w, http.StatusServiceUnavailable, CodeInternal, "metrics store disabled", nil)
@@ -85,8 +110,8 @@ func (h *MetricsHandler) CreateAlert(w http.ResponseWriter, r *http.Request) {
 	if rule.ID == "" {
 		rule.ID = "rule_" + randHex(6)
 	}
-	if rule.Name == "" || rule.Metric == "" || rule.Op == "" {
-		WriteError(w, http.StatusBadRequest, CodeBadRequest, "name, metric and op are required", nil)
+	if msg, ok := validateAlertRule(rule.Name, rule.Metric, rule.Op); !ok {
+		WriteError(w, http.StatusBadRequest, CodeBadRequest, msg, nil)
 		return
 	}
 	if rule.InstID == "" {
@@ -127,6 +152,10 @@ func (h *MetricsHandler) UpdateAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rule.ID = id
+	if msg, ok := validateAlertRule(rule.Name, rule.Metric, rule.Op); !ok {
+		WriteError(w, http.StatusBadRequest, CodeBadRequest, msg, nil)
+		return
+	}
 	if rule.InstID == "" {
 		rule.InstID = "*"
 	}

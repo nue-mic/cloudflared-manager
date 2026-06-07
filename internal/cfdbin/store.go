@@ -6,12 +6,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 )
+
+// versionTagRE constrains a resolved version to a single safe path segment,
+// preventing a crafted binaryVersion (e.g. "../../bin/sh") from escaping the
+// store root and executing an arbitrary binary.
+var versionTagRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+func validVersionTag(v string) bool { return versionTagRE.MatchString(v) }
 
 // VersionMeta is what we persist next to each downloaded binary
 // (`<root>/<version>/meta.json`).
@@ -122,6 +130,9 @@ func (s *Store) Resolve(version string) (string, error) {
 		if err != nil {
 			return "", err
 		}
+	}
+	if !validVersionTag(v) {
+		return "", ErrNotInstalled
 	}
 	p := s.binaryPath(v)
 	st, err := os.Stat(p)

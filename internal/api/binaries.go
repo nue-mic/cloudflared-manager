@@ -5,21 +5,34 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"regexp"
 
 	"github.com/mia-clark/cloudflared-manager/internal/cfdbin"
 )
 
+// versionParamRE guards the {version} path param (and install body) against
+// path-traversal: a version tag must be a single safe path segment. The
+// "latest" sentinel matches and is resolved by the downloader.
+var versionParamRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+func validVersionParam(v string) bool { return versionParamRE.MatchString(v) }
+
 // BinariesHandler exposes the /api/v1/binaries/* endpoints.
 type BinariesHandler struct {
-	store  *cfdbin.Store
-	dl     *cfdbin.Downloader
-	logger *slog.Logger
+	store          *cfdbin.Store
+	dl             *cfdbin.Downloader
+	logger         *slog.Logger
+	defaultVersion string // CFDM_CLOUDFLARED_DEFAULT_VERSION; used when Install omits version
 }
 
 // NewBinariesHandler constructs a handler. store and dl may be nil; in that
-// case every mutating endpoint returns 503.
-func NewBinariesHandler(store *cfdbin.Store, dl *cfdbin.Downloader, logger *slog.Logger) *BinariesHandler {
-	return &BinariesHandler{store: store, dl: dl, logger: logger}
+// case every mutating endpoint returns 503. defaultVersion ("" or "latest")
+// is the version Install falls back to when the request omits one.
+func NewBinariesHandler(store *cfdbin.Store, dl *cfdbin.Downloader, defaultVersion string, logger *slog.Logger) *BinariesHandler {
+	if defaultVersion == "" {
+		defaultVersion = "latest"
+	}
+	return &BinariesHandler{store: store, dl: dl, logger: logger, defaultVersion: defaultVersion}
 }
 
 // List returns all locally installed cloudflared versions.
@@ -70,7 +83,10 @@ func (h *BinariesHandler) Install(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Version == "" {
-		WriteError(w, http.StatusBadRequest, CodeBadRequest, "version is required", nil)
+		body.Version = h.defaultVersion // CFDM_CLOUDFLARED_DEFAULT_VERSION (default "latest")
+	}
+	if !validVersionParam(body.Version) {
+		WriteError(w, http.StatusBadRequest, CodeBadRequest, "invalid version tag", nil)
 		return
 	}
 
@@ -99,8 +115,8 @@ func (h *BinariesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	version := pathVersion(r)
-	if version == "" {
-		WriteError(w, http.StatusBadRequest, CodeBadRequest, "version path parameter is required", nil)
+	if version == "" || !validVersionParam(version) {
+		WriteError(w, http.StatusBadRequest, CodeBadRequest, "invalid or missing version path parameter", nil)
 		return
 	}
 	if err := h.store.Activate(version); err != nil {
@@ -124,8 +140,8 @@ func (h *BinariesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	version := pathVersion(r)
-	if version == "" {
-		WriteError(w, http.StatusBadRequest, CodeBadRequest, "version path parameter is required", nil)
+	if version == "" || !validVersionParam(version) {
+		WriteError(w, http.StatusBadRequest, CodeBadRequest, "invalid or missing version path parameter", nil)
 		return
 	}
 	if err := h.store.Delete(version); err != nil {

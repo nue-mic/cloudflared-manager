@@ -4,12 +4,15 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -70,11 +73,18 @@ func (h *ImportExportHandler) ImportURL(w http.ResponseWriter, r *http.Request) 
 		WriteError(w, http.StatusBadRequest, CodeBadRequest, "url required", nil)
 		return
 	}
+	if u, perr := url.Parse(strings.TrimSpace(body.URL)); perr != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		WriteError(w, http.StatusBadRequest, CodeBadRequest, "url must be a valid http(s) URL", nil)
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	name, data, err := downloadHTTP(ctx, body.URL)
 	if err != nil {
-		WriteError(w, http.StatusBadGateway, CodeUpstreamFailure, "download failed: "+err.Error(), nil)
+		// SSRF defense: never echo the upstream/dial error to the client —
+		// that would let an authenticated caller probe internal services.
+		h.log.Warn("import url download failed", slog.String("url", body.URL), slog.Any("err", err))
+		WriteError(w, http.StatusBadGateway, CodeUpstreamFailure, "download failed", nil)
 		return
 	}
 	id := body.ID
@@ -125,8 +135,16 @@ func (h *ImportExportHandler) ImportZIP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	imported := []string{}
+	var metaBytes []byte
 	for _, zf := range zr.File {
 		name := filepath.Base(zf.Name)
+		if name == "meta.json" {
+			if rc, err := zf.Open(); err == nil {
+				metaBytes, _ = io.ReadAll(io.LimitReader(rc, 1<<20))
+				rc.Close()
+			}
+			continue
+		}
 		ext := strings.ToLower(filepath.Ext(name))
 		if ext != ".yaml" && ext != ".yml" {
 			continue
@@ -146,6 +164,14 @@ func (h *ImportExportHandler) ImportZIP(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 		imported = append(imported, id)
+	}
+	// Restore display names / manual-start / ordering for the configs we just
+	// imported (only applies to ids that exist — see Manager.ImportMeta).
+	if len(metaBytes) > 0 {
+		var meta manager.Meta
+		if err := json.Unmarshal(metaBytes, &meta); err == nil {
+			h.m.ImportMeta(meta.Names, meta.Manual, meta.Sort)
+		}
 	}
 	WriteJSON(w, http.StatusOK, map[string]any{"imported": imported})
 }
@@ -184,6 +210,14 @@ func (h *ImportExportHandler) ExportAll(w http.ResponseWriter, r *http.Request) 
 		}
 		_, _ = fw.Write(raw)
 	}
+
+	// Include meta.json so display names / manual-start / ordering survive a
+	// backup → restore round-trip (restored by ImportZIP).
+	if metaBytes, err := os.ReadFile(h.m.MetaPath()); err == nil {
+		if fw, err := zw.Create("meta.json"); err == nil {
+			_, _ = fw.Write(metaBytes)
+		}
+	}
 }
 
 // persistRaw upserts a config and replies with the resulting envelope.
@@ -201,7 +235,7 @@ func (h *ImportExportHandler) persistRaw(w http.ResponseWriter, id string, raw [
 		return
 	}
 	snap, sc, mm, _ := h.m.Get(id)
-	WriteJSON(w, http.StatusOK, configEnvelope{Snapshot: snap, Config: sc, Cfdmgr: mm})
+	WriteJSON(w, http.StatusOK, newEnvelope(snap, sc, mm))
 }
 
 // upsertRaw creates the config if absent, otherwise replaces its body.
@@ -218,13 +252,14 @@ func (h *ImportExportHandler) upsertRaw(id string, raw []byte) error {
 
 // downloadHTTP fetches a remote config body. It returns the filename
 // suggested by Content-Disposition (or derived from the URL path) and
-// the raw bytes.
-func downloadHTTP(ctx context.Context, url string) (string, []byte, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+// the raw bytes. The HTTP client blocks connections to non-public
+// addresses (SSRF defense) at dial time so DNS rebinding cannot bypass it.
+func downloadHTTP(ctx context.Context, rawURL string) (string, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
 	if err != nil {
 		return "", nil, err
 	}
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := safeHTTPClient(15 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", nil, err
@@ -244,4 +279,59 @@ func downloadHTTP(ctx context.Context, url string) (string, []byte, error) {
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	return filename, body, err
+}
+
+// safeHTTPClient builds an HTTP client for import-by-URL that refuses to
+// connect to loopback / link-local / private / unspecified / multicast
+// addresses. The IP check runs inside DialContext against the concrete
+// address being dialed, so a hostname that passes a pre-check but rebinds
+// to an internal IP is still blocked. Redirects re-use the same transport
+// and are capped.
+func safeHTTPClient(timeout time.Duration) *http.Client {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	tr := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			ips, err := net.LookupIP(host)
+			if err != nil {
+				return nil, err
+			}
+			var lastErr error = fmt.Errorf("no dialable address for %s", host)
+			for _, ip := range ips {
+				if !isPublicIP(ip) {
+					return nil, fmt.Errorf("refusing to connect to non-public address %s", ip)
+				}
+				conn, derr := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+				if derr == nil {
+					return conn, nil
+				}
+				lastErr = derr
+			}
+			return nil, lastErr
+		},
+	}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: tr,
+		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return errors.New("too many redirects")
+			}
+			return nil
+		},
+	}
+}
+
+// isPublicIP reports whether ip is a routable public address safe to fetch
+// from in the import-by-URL path.
+func isPublicIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() || ip.IsPrivate() {
+		return false
+	}
+	return true
 }

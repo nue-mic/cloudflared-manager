@@ -7,6 +7,7 @@ import (
 	"hash/crc32"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,6 +30,11 @@ import (
 type instance struct {
 	id   string
 	path string
+
+	// opMu serializes the whole body of start/stop/reload for this
+	// instance so a stop arriving during another op's startup-grace
+	// window can never interleave and orphan the child process.
+	opMu sync.Mutex
 
 	mu      sync.RWMutex
 	state   cfdstate.ConfigState
@@ -73,6 +79,32 @@ func newInstance(id, path string, logger *slog.Logger, bus *eventbus.Bus, logSin
 // same port across daemon restarts.
 func allocMetricsPort(id string) int {
 	return int(crc32.ChecksumIEEE([]byte(id)))%758 + 20241
+}
+
+// freeMetricsPort returns preferred if it is currently bindable on the
+// loopback interface, otherwise linearly probes the [20241,20998] range for
+// the first free port. When the whole range is busy it returns preferred and
+// lets cloudflared surface the bind error. Probing keeps the allocation
+// deterministic (same id → same port) in the common no-collision case.
+func freeMetricsPort(preferred int) int {
+	const lo, hi = 20241, 20998
+	bindable := func(p int) bool {
+		ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(p))
+		if err != nil {
+			return false
+		}
+		_ = ln.Close()
+		return true
+	}
+	if preferred >= lo && preferred <= hi && bindable(preferred) {
+		return preferred
+	}
+	for p := lo; p <= hi; p++ {
+		if bindable(p) {
+			return p
+		}
+	}
+	return preferred
 }
 
 // MetricsAddr returns the "127.0.0.1:<port>" string for this instance's
@@ -170,6 +202,14 @@ func (i *instance) setState(s cfdstate.ConfigState) bool {
 // always win. The ProcessTailer is wired as an additional log sink so
 // structured log lines are available to the API /logs handler.
 func (i *instance) start(ctx context.Context) error {
+	i.opMu.Lock()
+	defer i.opMu.Unlock()
+	return i.startLocked(ctx)
+}
+
+// startLocked performs the actual spawn. Callers MUST hold i.opMu so a
+// concurrent stop cannot interleave during the startup-grace window.
+func (i *instance) startLocked(ctx context.Context) error {
 	i.mu.Lock()
 	if i.state == cfdstate.ConfigStateStarted || i.state == cfdstate.ConfigStateStarting {
 		i.mu.Unlock()
@@ -177,6 +217,11 @@ func (i *instance) start(ctx context.Context) error {
 	}
 	i.state = cfdstate.ConfigStateStarting
 	i.lastErr = ""
+	// Re-validate the metrics port is free at start time: the CRC32 allocator
+	// only spans 758 ports so two ids can collide, and a leftover listener
+	// from a crashed run could still hold it. A taken port would make
+	// cloudflared fail to bind --metrics and the sampler scrape blind.
+	i.metricsPort = freeMetricsPort(i.metricsPort)
 	i.mu.Unlock()
 
 	// 1. Read + parse + validate the YAML config.
@@ -300,6 +345,13 @@ func (i *instance) start(ctx context.Context) error {
 
 // stop terminates the child process and waits for it to be reaped.
 func (i *instance) stop() error {
+	i.opMu.Lock()
+	defer i.opMu.Unlock()
+	return i.stopLocked()
+}
+
+// stopLocked performs the actual teardown. Callers MUST hold i.opMu.
+func (i *instance) stopLocked() error {
 	i.mu.Lock()
 	if i.state == cfdstate.ConfigStateStopped || i.state == cfdstate.ConfigStateStopping {
 		i.mu.Unlock()
@@ -328,10 +380,12 @@ func (i *instance) stop() error {
 // reload = stop + start. cloudflared has no in-place reload for
 // per-connector settings; restart is the only correct path.
 func (i *instance) reload(ctx context.Context) error {
-	if err := i.stop(); err != nil {
+	i.opMu.Lock()
+	defer i.opMu.Unlock()
+	if err := i.stopLocked(); err != nil {
 		return err
 	}
-	return i.start(ctx)
+	return i.startLocked(ctx)
 }
 
 func (i *instance) recordError(err error) {
