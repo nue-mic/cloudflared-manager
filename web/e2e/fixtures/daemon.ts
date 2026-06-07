@@ -27,18 +27,20 @@ type Fixtures = {
  *
  * 每个 worker 启动时:
  *   1. 创建独立 TempDir
- *   2. 起一个 frpsmgrd 子进程, 监听 :18080+workerIndex
- *   3. 轮询 GET /api/v1/version 直到 200 (max 5s)
+ *   2. 起一个 cfdmgrd 子进程, 监听 127.0.0.1:18080+workerIndex
+ *   3. 轮询 GET /api/v1/health 直到 200 (max 5s)
  *   4. 测试运行
  *   5. 结束时 kill daemon, 全绿就删 TempDir, 否则保留
+ *
+ * 注意：cfdmgrd 在缺少 CFDM_API_TOKEN 时直接拒绝启动，因此 token 必填。
  */
 export const test = base.extend<{}, Fixtures>({
   daemon: [
     async ({}, use, workerInfo) => {
-      const bin = process.env.FRPSMGRD_BIN;
+      const bin = process.env.CFDMGRD_BIN;
       if (!bin || !existsSync(bin)) {
         throw new Error(
-          `FRPSMGRD_BIN not set or not exists (${bin}). globalSetup should have set it.`,
+          `CFDMGRD_BIN not set or not exists (${bin}). globalSetup should have set it.`,
         );
       }
 
@@ -52,10 +54,10 @@ export const test = base.extend<{}, Fixtures>({
       const proc: ChildProcess = spawn(bin, ['serve'], {
         env: {
           ...process.env,
-          FRPSMGR_API_TOKEN: token,
-          FRPSMGR_HTTP_ADDR: `:${port}`,
-          FRPSMGR_DATA_DIR: dataDir,
-          FRPSMGR_LOG_LEVEL: 'info',
+          CFDM_API_TOKEN: token,
+          CFDM_HTTP_ADDR: `127.0.0.1:${port}`,
+          CFDM_DATA_DIR: dataDir,
+          CFDM_LOG_LEVEL: 'info',
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -63,7 +65,7 @@ export const test = base.extend<{}, Fixtures>({
       proc.stderr?.pipe(logStream);
 
       const baseURL = `http://127.0.0.1:${port}`;
-      const ready = await waitForReady(baseURL, token, 5000);
+      const ready = await waitForReady(baseURL, 5000);
       if (!ready) {
         proc.kill('SIGKILL');
         logStream.end();
@@ -83,8 +85,7 @@ export const test = base.extend<{}, Fixtures>({
         await delay(500);
         if (proc.exitCode == null) proc.kill('SIGKILL');
         logStream.end();
-        const anyFailed = testFailed;
-        if (!anyFailed) {
+        if (!testFailed) {
           rmSync(dataDir, { recursive: true, force: true });
         } else {
           // eslint-disable-next-line no-console
@@ -96,13 +97,15 @@ export const test = base.extend<{}, Fixtures>({
   ],
 });
 
-async function waitForReady(baseURL: string, token: string, timeoutMs: number): Promise<boolean> {
+/**
+ * 轮询 /api/v1/health（**无需鉴权**）直到 200 或超时。
+ * health 探针不在 Bearer 子树内，所以这里不带 Authorization。
+ */
+async function waitForReady(baseURL: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const r = await fetch(`${baseURL}/api/v1/version`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const r = await fetch(`${baseURL}/api/v1/health`);
       if (r.ok) return true;
     } catch {
       // ignore, retry
