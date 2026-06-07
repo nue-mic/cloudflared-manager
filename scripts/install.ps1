@@ -1,13 +1,13 @@
 ﻿#Requires -Version 5.1
 # =============================================================================
-# frpsmgrd 一键安装脚本 (frps-manager) — Windows / PowerShell 版
+# cfdmgrd 一键安装脚本 (cloudflared-manager) — Windows / PowerShell 版
 #
 #   支持: Windows 10/11 / Windows Server (amd64 / arm64)
-#   服务: 通过 NSSM 将 frpsmgrd.exe 包装为真正的 Windows 服务 (可在 services.msc 管理)
+#   服务: 通过 NSSM 将 cfdmgrd.exe 包装为真正的 Windows 服务 (可在 services.msc 管理)
 #   功能: 自动识别架构 -> 下载二进制 -> 安装 -> 注册服务 -> 开机自启 -> 健康检查
 #
 # 一行安装 (推荐, 管理员 PowerShell 中执行):
-#   irm https://raw.githubusercontent.com/mia-clark/frps-manager/main/scripts/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/mia-clark/cloudflared-manager/main/scripts/install.ps1 | iex
 #
 # 非交互 / 自定义示例 (先把脚本下到本地):
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Yes -Port 9000 -Token mysecret
@@ -15,38 +15,38 @@
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
 #
 # 环境变量 (等价于参数, 便于自动化):
-#   $env:FRPSMGR_PORT=9000; $env:FRPSMGR_API_TOKEN='xxx'; $env:FRPSMGR_VERSION='v1.2.14'; $env:ASSUME_YES=1
+#   $env:CFDM_PORT=9000; $env:CFDM_API_TOKEN='xxx'; $env:CFDM_VERSION='v1.2.14'; $env:ASSUME_YES=1
 # =============================================================================
 
 [CmdletBinding()]
 param(
-    [Alias('p')][string]$Port    = $env:FRPSMGR_PORT,
-    [Alias('t')][string]$Token   = $env:FRPSMGR_API_TOKEN,
-    [Alias('v')][string]$Version = $env:FRPSMGR_VERSION,
+    [Alias('p')][string]$Port    = $env:CFDM_PORT,
+    [Alias('t')][string]$Token   = $env:CFDM_API_TOKEN,
+    [Alias('v')][string]$Version = $env:CFDM_VERSION,
     [Alias('y')][switch]$Yes,
     [Alias('u')][switch]$Update,
     [Alias('f')][switch]$Force,
     [switch]$Uninstall,
-    [string]$Proxy   = $env:FRPSMGR_DOWNLOAD_PROXY,
+    [string]$Proxy   = $env:CFDM_DOWNLOAD_PROXY,
     [switch]$NoProxy,
     [Alias('h')][switch]$Help
 )
 
-if (-not $NoProxy -and $env:FRPSMGR_NO_PROXY -eq '1') { $NoProxy = $true }
+if (-not $NoProxy -and $env:CFDM_NO_PROXY -eq '1') { $NoProxy = $true }
 
 $ErrorActionPreference = 'Stop'
 
 # ----------------------------------------------------------------------------
 # 常量配置
 # ----------------------------------------------------------------------------
-$Repo         = 'mia-clark/frps-manager'
-$BinName      = 'frpsmgrd.exe'
-$ServiceName  = 'frpsmgrd'
-$DisplayName  = 'frpsmgrd - FRP Manager Server'
+$Repo         = 'mia-clark/cloudflared-manager'
+$BinName      = 'cfdmgrd.exe'
+$ServiceName  = 'cfdmgrd'
+$DisplayName  = 'cfdmgrd - cloudflared multi-instance manager'
 $DefaultPort  = '8080'
-$InstallDir   = Join-Path $env:ProgramFiles 'frpsmgrd'        # 二进制 + nssm.exe
-$DataDir      = Join-Path $env:ProgramData  'frpsmgrd\data'   # 运行数据
-$LogDir       = Join-Path $env:ProgramData  'frpsmgrd\logs'   # 服务日志
+$InstallDir   = Join-Path $env:ProgramFiles 'cfdmgrd'        # 二进制 + nssm.exe
+$DataDir      = Join-Path $env:ProgramData  'cfdmgrd\data'   # 运行数据
+$LogDir       = Join-Path $env:ProgramData  'cfdmgrd\logs'   # 服务日志
 $NssmVersion  = '2.24'
 $NssmZipUrl   = "https://nssm.cc/release/nssm-$NssmVersion.zip"
 
@@ -95,7 +95,7 @@ function Cleanup {
 # ----------------------------------------------------------------------------
 function Show-Usage {
     Write-Host @"
-frpsmgrd 一键安装脚本 (Windows)
+cfdmgrd 一键安装脚本 (Windows)
 
 用法: powershell -ExecutionPolicy Bypass -File install.ps1 [选项]
 
@@ -235,7 +235,7 @@ function Test-Port {
 function Get-RemoteFile {
     param([string]$Url, [string]$Dest)
     Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing `
-        -Headers @{ 'User-Agent' = 'frpsmgrd-installer' } -TimeoutSec 30
+        -Headers @{ 'User-Agent' = 'cfdmgrd-installer' } -TimeoutSec 30
 }
 
 # 验证下载文件是合法 zip (防"伪 200": 代理返回 HTML 错误页但 HTTP 200)
@@ -255,7 +255,7 @@ function Test-Zip {
 }
 
 # 智能代理下载: 遍历 $DlProxies, 第一个成功+合法的就用; 全失败回落直连
-# 优先级: -Proxy/$env:FRPSMGR_DOWNLOAD_PROXY > 内置数组 > 直连
+# 优先级: -Proxy/$env:CFDM_DOWNLOAD_PROXY > 内置数组 > 直连
 function Invoke-Download {
     param([string]$GhUrl, [string]$Dest)
 
@@ -299,7 +299,7 @@ function Resolve-Version {
     Write-Info '正在查询最新版本...'
     try {
         $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" `
-            -Headers @{ 'User-Agent' = 'frpsmgrd-installer' } -UseBasicParsing
+            -Headers @{ 'User-Agent' = 'cfdmgrd-installer' } -UseBasicParsing
         $script:Version = $rel.tag_name
     } catch {
         Die '无法获取最新版本, 请用 -Version 手动指定 (如 -Version v1.2.14)'
@@ -366,14 +366,14 @@ function Confirm-Install {
 }
 
 # ----------------------------------------------------------------------------
-# 下载并安装 frpsmgrd 二进制
+# 下载并安装 cfdmgrd 二进制
 # ----------------------------------------------------------------------------
 function Install-Binary {
     $verNum = $script:Version.TrimStart('v')
-    $asset  = "frpsmgrd_${verNum}_windows_$($script:Arch).zip"
+    $asset  = "cfdmgrd_${verNum}_windows_$($script:Arch).zip"
     $url    = "https://github.com/$Repo/releases/download/$($script:Version)/$asset"
 
-    $script:TmpDir = Join-Path $env:TEMP ("frpsmgr_" + [Guid]::NewGuid().ToString('N'))
+    $script:TmpDir = Join-Path $env:TEMP ("cfdmgr_" + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $script:TmpDir | Out-Null
 
     $zipPath = Join-Path $script:TmpDir $asset
@@ -406,7 +406,7 @@ function Install-Nssm {
     if (Test-Path $script:NssmPath) { return }   # 已存在则复用
     Write-Info "下载服务管理器 NSSM v$NssmVersion ..."
     if (-not $script:TmpDir) {
-        $script:TmpDir = Join-Path $env:TEMP ("frpsmgr_" + [Guid]::NewGuid().ToString('N'))
+        $script:TmpDir = Join-Path $env:TEMP ("cfdmgr_" + [Guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Force -Path $script:TmpDir | Out-Null
     }
     $nssmZip = Join-Path $script:TmpDir 'nssm.zip'
@@ -443,7 +443,7 @@ function Remove-ServiceIfExists {
 # ----------------------------------------------------------------------------
 # 注册 / 配置服务 (NSSM)
 # ----------------------------------------------------------------------------
-function Register-FrpsmgrService {
+function Register-CfdmgrService {
     Write-Info "注册 Windows 服务: $ServiceName"
     New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
     New-Item -ItemType Directory -Force -Path $LogDir  | Out-Null
@@ -452,25 +452,25 @@ function Register-FrpsmgrService {
 
     & $script:NssmPath install $ServiceName $script:BinPath serve | Out-Null
     & $script:NssmPath set $ServiceName DisplayName  $DisplayName | Out-Null
-    & $script:NssmPath set $ServiceName Description   "frpsmgrd - headless FRP client manager daemon" | Out-Null
+    & $script:NssmPath set $ServiceName Description   "cfdmgrd - headless cloudflared multi-instance manager daemon" | Out-Null
     & $script:NssmPath set $ServiceName AppDirectory  $InstallDir | Out-Null
     & $script:NssmPath set $ServiceName Start         'SERVICE_AUTO_START' | Out-Null
 
     # 环境变量注入 (等价于 systemd EnvironmentFile)
     $envPairs = @(
-        "FRPSMGR_API_TOKEN=$($script:Token)",
-        "FRPSMGR_HTTP_ADDR=:$($script:Port)",
-        "FRPSMGR_DATA_DIR=$DataDir",
-        "FRPSMGR_LOG_LEVEL=info",
-        "FRPSMGR_CORS_ORIGINS=*",
-        "FRPSMGR_DOCS_ENABLED=true",
-        "FRPSMGR_SELF_UPDATE_ENABLED=true"
+        "CFDM_API_TOKEN=$($script:Token)",
+        "CFDM_HTTP_ADDR=:$($script:Port)",
+        "CFDM_DATA_DIR=$DataDir",
+        "CFDM_LOG_LEVEL=info",
+        "CFDM_CORS_ORIGINS=*",
+        "CFDM_DOCS_ENABLED=true",
+        "CFDM_SELF_UPDATE_ENABLED=true"
     )
     & $script:NssmPath set $ServiceName AppEnvironmentExtra @envPairs | Out-Null
 
     # 日志与崩溃自动重启
-    & $script:NssmPath set $ServiceName AppStdout   (Join-Path $LogDir 'frpsmgrd.log') | Out-Null
-    & $script:NssmPath set $ServiceName AppStderr   (Join-Path $LogDir 'frpsmgrd.log') | Out-Null
+    & $script:NssmPath set $ServiceName AppStdout   (Join-Path $LogDir 'cfdmgrd.log') | Out-Null
+    & $script:NssmPath set $ServiceName AppStderr   (Join-Path $LogDir 'cfdmgrd.log') | Out-Null
     & $script:NssmPath set $ServiceName AppRotateFiles 1 | Out-Null
     & $script:NssmPath set $ServiceName AppRotateBytes 10485760 | Out-Null
     & $script:NssmPath set $ServiceName AppExit Default Restart | Out-Null
@@ -481,18 +481,18 @@ function Register-FrpsmgrService {
 }
 
 # ----------------------------------------------------------------------------
-# 生成统一管理命令 fms (fms.cmd + fms.ps1), 并把安装目录加入系统 PATH
-#   之后在任意终端 (cmd / PowerShell) 都可直接执行 fms <命令>
+# 生成统一管理命令 cfm (cfm.cmd + cfm.ps1), 并把安装目录加入系统 PATH
+#   之后在任意终端 (cmd / PowerShell) 都可直接执行 cfm <命令>
 # ----------------------------------------------------------------------------
 function Install-Cli {
-    Write-Info '安装管理命令: fms'
-    $cliPs1 = Join-Path $InstallDir 'fms.ps1'
-    $cliCmd = Join-Path $InstallDir 'fms.cmd'
+    Write-Info '安装管理命令: cfm'
+    $cliPs1 = Join-Path $InstallDir 'cfm.ps1'
+    $cliCmd = Join-Path $InstallDir 'cfm.cmd'
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
     # 头部: 注入安装期常量 (可展开 here-string; 用反引号转义运行期 $ 以保留字面量)
     $head = @"
-# fms.ps1 — frpsmgrd 管理命令 (由 install.ps1 自动生成, 请勿手动编辑)
+# cfm.ps1 — cfdmgrd 管理命令 (由 install.ps1 自动生成, 请勿手动编辑)
 `$ServiceName = '$ServiceName'
 `$InstallDir  = '$InstallDir'
 `$BinName     = '$BinName'
@@ -508,10 +508,10 @@ try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 $BinPath  = Join-Path $InstallDir $BinName
 $NssmPath = Join-Path $InstallDir 'nssm.exe'
-$LogFile  = Join-Path $LogDir 'frpsmgrd.log'
+$LogFile  = Join-Path $LogDir 'cfdmgrd.log'
 $RawUrl   = "https://raw.githubusercontent.com/$Repo/main/scripts/install.ps1"
 # 允许用镜像源覆盖 install.ps1 下载地址 (适配国内网络)
-if ($env:FRPSMGR_INSTALL_URL) { $RawUrl = $env:FRPSMGR_INSTALL_URL }
+if ($env:CFDM_INSTALL_URL) { $RawUrl = $env:CFDM_INSTALL_URL }
 
 $AllArgs = @($args)
 $Cmd  = if ($AllArgs.Count -ge 1) { $AllArgs[0] } else { 'help' }
@@ -548,22 +548,22 @@ function Write-CliPanel {
     Write-Host '────────────────────────────────────────────'
     Write-Host '  管理命令 (已加入 PATH, 新开终端任意目录可用):'
     $rows = @(
-        @('fms start',     '启动服务'),
-        @('fms stop',      '停止服务'),
-        @('fms restart',   '重启服务'),
-        @('fms status',    '查看状态'),
-        @('fms logs -f',   '实时日志'),
-        @('fms info',      '查看完整信息'),
-        @('fms config',    '查看/编辑配置'),
-        @('fms update',    '更新到最新版'),
-        @('fms uninstall', '卸载'),
-        @('fms help',      '查看全部命令')
+        @('cfm start',     '启动服务'),
+        @('cfm stop',      '停止服务'),
+        @('cfm restart',   '重启服务'),
+        @('cfm status',    '查看状态'),
+        @('cfm logs -f',   '实时日志'),
+        @('cfm info',      '查看完整信息'),
+        @('cfm config',    '查看/编辑配置'),
+        @('cfm update',    '更新到最新版'),
+        @('cfm uninstall', '卸载'),
+        @('cfm help',      '查看全部命令')
     )
     foreach ($r in $rows) { Write-Host ('    {0,-13} # {1}' -f $r[0], $r[1]) }
     Write-Host '────────────────────────────────────────────'
 }
 # ----------------------------------------------------------------------------
-# 外网 IP 探测 (与 install.ps1 主体同款, 此处独立嵌入让 fms 自包含)
+# 外网 IP 探测 (与 install.ps1 主体同款, 此处独立嵌入让 cfm 自包含)
 # ----------------------------------------------------------------------------
 $PubIpV4Urls = @(
     'https://4.ipw.cn', 'https://api.ip.sb/ip', 'https://api.ipify.org',
@@ -619,17 +619,17 @@ function Do-Info {
     if (Use-Nssm) {
         $raw = & $NssmPath get $ServiceName AppEnvironmentExtra 2>$null
         foreach ($line in $raw) {
-            if     ($line -match '^FRPSMGR_HTTP_ADDR=(.*)$') { $port  = $Matches[1].TrimStart(':') }
-            elseif ($line -match '^FRPSMGR_API_TOKEN=(.*)$') { $token = $Matches[1] }
-            elseif ($line -match '^FRPSMGR_DATA_DIR=(.*)$')  { $ddir  = $Matches[1] }
-            elseif ($line -match '^FRPSMGR_LOG_LEVEL=(.*)$') { $loglv = $Matches[1] }
+            if     ($line -match '^CFDM_HTTP_ADDR=(.*)$') { $port  = $Matches[1].TrimStart(':') }
+            elseif ($line -match '^CFDM_API_TOKEN=(.*)$') { $token = $Matches[1] }
+            elseif ($line -match '^CFDM_DATA_DIR=(.*)$')  { $ddir  = $Matches[1] }
+            elseif ($line -match '^CFDM_LOG_LEVEL=(.*)$') { $loglv = $Matches[1] }
         }
     }
     $ver = '未知'
     if (Test-Path $BinPath) { $ver = ((& $BinPath version 2>$null) -join ' ') }
     $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
     $state = if ($svc) { "$($svc.Status)" } else { '未安装' }
-    Write-Host 'frpsmgrd 运行信息'
+    Write-Host 'cfdmgrd 运行信息'
     Write-Host '────────────────────────────────────────────'
     Write-Host ("  版本     : {0}" -f $ver)
     Write-Host ("  服务状态 : {0}" -f $state)
@@ -642,7 +642,7 @@ function Do-Info {
     Write-Host ("  监听地址 : :{0}" -f $port)
     Write-Host ("  日志级别 : {0}" -f $loglv)
     Write-Host ("  程序路径 : {0}" -f $BinPath)
-    Write-Host ("  管理命令 : {0}" -f (Join-Path $InstallDir 'fms.cmd'))
+    Write-Host ("  管理命令 : {0}" -f (Join-Path $InstallDir 'cfm.cmd'))
     Write-Host ("  服务管理 : {0}" -f $NssmPath)
     Write-Host ("  数据目录 : {0}" -f $ddir)
     Write-Host ("  日志文件 : {0}" -f $LogFile)
@@ -658,16 +658,16 @@ function Do-Config {
 function Do-Version { & $BinPath version }
 function Invoke-Installer([object[]]$extra) {
     Need-Admin
-    $tmp = Join-Path $env:TEMP ("frpsmgr_install_" + [Guid]::NewGuid().ToString('N') + ".ps1")
-    Invoke-WebRequest -Uri $RawUrl -OutFile $tmp -UseBasicParsing -Headers @{ 'User-Agent' = 'frpsmgrd-installer' }
+    $tmp = Join-Path $env:TEMP ("cfdmgr_install_" + [Guid]::NewGuid().ToString('N') + ".ps1")
+    Invoke-WebRequest -Uri $RawUrl -OutFile $tmp -UseBasicParsing -Headers @{ 'User-Agent' = 'cfdmgrd-installer' }
     try { & powershell -NoProfile -ExecutionPolicy Bypass -File $tmp @extra }
     finally { Remove-Item -Force $tmp -ErrorAction SilentlyContinue }
 }
 function Show-Usage {
     Write-Host @"
-fms — frpsmgrd 管理命令
+cfm — cfdmgrd 管理命令
 
-用法: fms <命令> [参数]
+用法: cfm <命令> [参数]
 
 服务管理:
   start            启动服务
@@ -694,7 +694,7 @@ fms — frpsmgrd 管理命令
 
 function Write-CliTip {
     Write-Host '────────────────────────────────────────────'
-    Write-Host '💡 输入 fms 查看全部命令'
+    Write-Host '💡 输入 cfm 查看全部命令'
     Write-Host '────────────────────────────────────────────'
 }
 
@@ -713,7 +713,7 @@ switch ($Cmd.ToLower()) {
     'install'   { Invoke-Installer $Rest }
     'uninstall' {
         Invoke-Installer @('-Uninstall')
-        Remove-Item -Force (Join-Path $InstallDir 'fms.cmd'), (Join-Path $InstallDir 'fms.ps1') -ErrorAction SilentlyContinue
+        Remove-Item -Force (Join-Path $InstallDir 'cfm.cmd'), (Join-Path $InstallDir 'cfm.ps1') -ErrorAction SilentlyContinue
         exit 0
     }
     default {
@@ -726,34 +726,34 @@ switch ($Cmd.ToLower()) {
 Write-CliTip
 '@
 
-    # fms.ps1 含中文, 必须带 UTF-8 BOM, 否则 PowerShell 5.1 按 ANSI 解析会乱码/语法错
+    # cfm.ps1 含中文, 必须带 UTF-8 BOM, 否则 PowerShell 5.1 按 ANSI 解析会乱码/语法错
     $utf8Bom = New-Object System.Text.UTF8Encoding($true)
     [System.IO.File]::WriteAllText($cliPs1, ($head + "`r`n" + $body), $utf8Bom)
-    # fms.cmd 为纯 ASCII, 且 cmd.exe 不能带 BOM, 故用无 BOM 写入
-    $cmdShim = "@echo off`r`npowershell -NoProfile -ExecutionPolicy Bypass -File `"%~dp0fms.ps1`" %*`r`n"
+    # cfm.cmd 为纯 ASCII, 且 cmd.exe 不能带 BOM, 故用无 BOM 写入
+    $cmdShim = "@echo off`r`npowershell -NoProfile -ExecutionPolicy Bypass -File `"%~dp0cfm.ps1`" %*`r`n"
     [System.IO.File]::WriteAllText($cliCmd, $cmdShim, (New-Object System.Text.UTF8Encoding($false)))
 
-    # 确保安装目录在系统 PATH 中 (新开终端即可直接使用 fms)
+    # 确保安装目录在系统 PATH 中 (新开终端即可直接使用 cfm)
     $mp = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     if ($mp -notlike "*$InstallDir*") {
         [Environment]::SetEnvironmentVariable('Path', ($mp.TrimEnd(';') + ';' + $InstallDir), 'Machine')
         Write-Info "已将 $InstallDir 加入系统 PATH (新开终端生效)"
     }
     if (($env:Path -split ';') -notcontains $InstallDir) { $env:Path = $env:Path.TrimEnd(';') + ';' + $InstallDir }
-    Write-Ok '管理命令已安装, 现在可使用: fms <命令>'
+    Write-Ok '管理命令已安装, 现在可使用: cfm <命令>'
 }
 
 # 从已注册服务读取监听端口 (用于更新后健康检查)
 function Get-ServicePort {
     if (-not (Test-Service)) { return '' }
     $raw = & $script:NssmPath get $ServiceName AppEnvironmentExtra 2>$null
-    $line = $raw | Where-Object { $_ -match '^FRPSMGR_HTTP_ADDR=' } | Select-Object -First 1
+    $line = $raw | Where-Object { $_ -match '^CFDM_HTTP_ADDR=' } | Select-Object -First 1
     if ($line) { return ($line -split '=', 2)[1].TrimStart(':') }
     return ''
 }
 
 # 重启已有服务 (仅加载新二进制, 不改配置)
-function Restart-FrpsmgrService {
+function Restart-CfdmgrService {
     if (Test-Service) {
         & $script:NssmPath restart $ServiceName | Out-Null
         Write-Ok '服务已重启'
@@ -768,7 +768,7 @@ function Restart-FrpsmgrService {
 function Get-InstalledVersion {
     if (Test-Path $script:BinPath) {
         $out = & $script:BinPath version 2>$null
-        if ($out -match 'frpsmgrd\s+(\S+)') { return $Matches[1] }
+        if ($out -match 'cfdmgrd\s+(\S+)') { return $Matches[1] }
     }
     return ''
 }
@@ -793,7 +793,7 @@ function Invoke-HealthCheck {
 # 安装总流程
 # ----------------------------------------------------------------------------
 function Invoke-Install {
-    Write-Host '=== frpsmgrd 一键安装 (Windows) ===' -ForegroundColor White
+    Write-Host '=== cfdmgrd 一键安装 (Windows) ===' -ForegroundColor White
     Get-Platform
     Resolve-Version
     Resolve-Port
@@ -801,28 +801,28 @@ function Invoke-Install {
     Confirm-Install
     Install-Binary
     Install-Nssm
-    Register-FrpsmgrService
+    Register-CfdmgrService
     Install-Cli
     Invoke-HealthCheck
     Write-Summary
 }
 
-# 打印 fms 管理命令清单 (安装 / 更新结尾共用, 方便用户直接照着敲)
+# 打印 cfm 管理命令清单 (安装 / 更新结尾共用, 方便用户直接照着敲)
 function Write-CliHint {
     Write-Host '────────────────────────────────────────────'
     Write-Host '  管理命令 (已加入 PATH, 新开终端任意目录可用):'
-    # {0,-13} 定宽左对齐命令列 (最长 fms uninstall = 13)，# 自然对齐
+    # {0,-13} 定宽左对齐命令列 (最长 cfm uninstall = 13)，# 自然对齐
     $rows = @(
-        @('fms start',     '启动服务'),
-        @('fms stop',      '停止服务'),
-        @('fms restart',   '重启服务'),
-        @('fms status',    '查看状态'),
-        @('fms logs -f',   '实时日志'),
-        @('fms info',      '查看完整信息'),
-        @('fms config',    '查看/编辑配置'),
-        @('fms update',    '更新到最新版'),
-        @('fms uninstall', '卸载'),
-        @('fms help',      '查看全部命令')
+        @('cfm start',     '启动服务'),
+        @('cfm stop',      '停止服务'),
+        @('cfm restart',   '重启服务'),
+        @('cfm status',    '查看状态'),
+        @('cfm logs -f',   '实时日志'),
+        @('cfm info',      '查看完整信息'),
+        @('cfm config',    '查看/编辑配置'),
+        @('cfm update',    '更新到最新版'),
+        @('cfm uninstall', '卸载'),
+        @('cfm help',      '查看全部命令')
     )
     foreach ($r in $rows) { Write-Host ('    {0,-13} # {1}' -f $r[0], $r[1]) }
     Write-Host '────────────────────────────────────────────'
@@ -904,11 +904,11 @@ function Write-Summary {
 # 全自动更新流程 (保留现有端口/令牌/数据, 仅替换二进制并重启)
 # ----------------------------------------------------------------------------
 function Invoke-Update {
-    Write-Host '=== frpsmgrd 全自动更新 (Windows) ===' -ForegroundColor White
+    Write-Host '=== cfdmgrd 全自动更新 (Windows) ===' -ForegroundColor White
     Get-Platform
 
     if (-not (Test-Path $script:BinPath)) {
-        Die "未检测到已安装的 frpsmgrd ($($script:BinPath))。请先执行安装, 而非更新。"
+        Die "未检测到已安装的 cfdmgrd ($($script:BinPath))。请先执行安装, 而非更新。"
     }
 
     $cur = Get-InstalledVersion
@@ -927,8 +927,8 @@ function Invoke-Update {
     # 先停服务再覆盖, 避免 exe 被占用
     if (Test-Service) { & $script:NssmPath stop $ServiceName 2>$null | Out-Null; Start-Sleep -Milliseconds 500 }
     Install-Binary
-    Install-Cli                 # 顺带刷新管理命令 fms 到最新
-    Restart-FrpsmgrService
+    Install-Cli                 # 顺带刷新管理命令 cfm 到最新
+    Restart-CfdmgrService
 
     $script:Port = Get-ServicePort
     if ($script:Port) {
@@ -940,7 +940,7 @@ function Invoke-Update {
     Write-Host ''
     Write-Host "✓ 更新完成! 版本: $target" -ForegroundColor Green
     if ($script:Port) {
-        # 重置缓存, 让 fms update 也能拿到最新外网 IP
+        # 重置缓存, 让 cfm update 也能拿到最新外网 IP
         $script:PublicIpsCache = $null
         Write-UrlLine '访问地址' "$($script:Port)"
         if ((Get-PublicIpsCached).Count -gt 0) {
@@ -955,7 +955,7 @@ function Invoke-Update {
 # 卸载流程
 # ----------------------------------------------------------------------------
 function Invoke-Uninstall {
-    Write-Host '=== frpsmgrd 卸载 (Windows) ===' -ForegroundColor White
+    Write-Host '=== cfdmgrd 卸载 (Windows) ===' -ForegroundColor White
 
     if (Test-Path $script:NssmPath) {
         if (Test-Service) {
@@ -977,8 +977,8 @@ function Invoke-Uninstall {
         Write-Ok "已删除二进制 $($script:BinPath)"
     }
 
-    # 删除管理命令 fms (fms.cmd + fms.ps1)
-    Remove-Item -Force (Join-Path $InstallDir 'fms.cmd'), (Join-Path $InstallDir 'fms.ps1') -ErrorAction SilentlyContinue
+    # 删除管理命令 cfm (cfm.cmd + cfm.ps1)
+    Remove-Item -Force (Join-Path $InstallDir 'cfm.cmd'), (Join-Path $InstallDir 'cfm.ps1') -ErrorAction SilentlyContinue
 
     $r = Read-Prompt "是否同时删除配置与数据目录 ($(Split-Path $DataDir -Parent))? [y/N]" 'N'
     if ($r -match '^(y|yes)$') {

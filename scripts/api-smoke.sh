@@ -55,19 +55,19 @@ check "version 正确 token 200" 200 -H "$H_AUTH" "$B/version"
 
 section "2. Configs CRUD"
 check "POST /configs 201" 201 -H "$H_AUTH" -H "$H_JSON" -X POST "$B/configs" \
-  -d '{"id":"srv1","config":{"bindPort":7301,"vhostHTTPPort":8081},"frpsmgr":{"name":"测试1","manualStart":false}}'
+  -d '{"id":"srv1","config":{"bindPort":7301,"vhostHTTPPort":8081},"cfdm":{"name":"测试1","manualStart":false}}'
 check "POST /configs 重复 409" 409 -H "$H_AUTH" -H "$H_JSON" -X POST "$B/configs" \
-  -d '{"id":"srv1","config":{"bindPort":7000},"frpsmgr":{}}'
+  -d '{"id":"srv1","config":{"bindPort":7000},"cfdm":{}}'
 check "POST /configs 缺 id 400" 400 -H "$H_AUTH" -H "$H_JSON" -X POST "$B/configs" -d '{"config":{"bindPort":7000}}'
 check "POST /configs 非法 id 400" 400 -H "$H_AUTH" -H "$H_JSON" -X POST "$B/configs" \
-  -d '{"id":"bad/id","config":{"bindPort":7000},"frpsmgr":{}}'
+  -d '{"id":"bad/id","config":{"bindPort":7000},"cfdm":{}}'
 check "POST /configs 未知字段 400 (DisallowUnknownFields)" 400 -H "$H_AUTH" -H "$H_JSON" -X POST "$B/configs" \
-  -d '{"id":"x","config":{"bindPort":7000},"frpsmgr":{},"hacker":true}'
+  -d '{"id":"x","config":{"bindPort":7000},"cfdm":{},"hacker":true}'
 check_contains "GET /configs 列表" 200 '"id":"srv1"' -H "$H_AUTH" "$B/configs"
 check_contains "GET /configs/srv1 含 bindPort" 200 '"bindPort":7301' -H "$H_AUTH" "$B/configs/srv1"
 check "GET /configs/nonexist 404" 404 -H "$H_AUTH" "$B/configs/nonexist"
 check "PUT /configs/srv1 200" 200 -H "$H_AUTH" -H "$H_JSON" -X PUT "$B/configs/srv1" \
-  -d '{"config":{"bindPort":7301,"vhostHTTPPort":8081,"subDomainHost":"example.com"},"frpsmgr":{"name":"测试1","manualStart":false}}'
+  -d '{"config":{"bindPort":7301,"vhostHTTPPort":8081,"subDomainHost":"example.com"},"cfdm":{"name":"测试1","manualStart":false}}'
 check_contains "PUT 后 subDomainHost 已更新" 200 '"subDomainHost":"example.com"' -H "$H_AUTH" "$B/configs/srv1"
 check "PATCH /configs/srv1 200" 200 -H "$H_AUTH" -H "$H_JSON" -X PATCH "$B/configs/srv1" \
   -d '{"vhostHTTPSPort":8443}'
@@ -77,7 +77,7 @@ check "POST /configs/srv1/duplicate 201" 201 -H "$H_AUTH" -H "$H_JSON" -X POST "
 check_contains "副本字段沿用" 200 '"bindPort":7301' -H "$H_AUTH" "$B/configs/srv1_copy"
 check "POST /configs/reorder 204" 204 -H "$H_AUTH" -H "$H_JSON" -X POST "$B/configs/reorder" \
   -d '{"order":["srv1_copy","srv1"]}'
-check_contains "GET /configs/srv1/raw 是 frps 原生 TOML" 200 'bindPort = 7301' -H "$H_AUTH" "$B/configs/srv1/raw"
+check_contains "GET /configs/srv1/raw 是 cloudflared 配置 YAML" 200 'bindPort = 7301' -H "$H_AUTH" "$B/configs/srv1/raw"
 check "PUT /configs/srv1/raw 合法 TOML 200" 200 -H "$H_AUTH" -H "$H_TOML" -X PUT "$B/configs/srv1/raw" \
   --data-binary 'bindPort = 7301
 vhostHTTPPort = 8081

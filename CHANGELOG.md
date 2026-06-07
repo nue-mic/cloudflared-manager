@@ -1,8 +1,44 @@
-# Changelog[Deprecated]
+# Changelog
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## v2.0.0 — 2026-06-07 — 🎉 cloudflared-manager 重大转型
+
+本版本把 frps-manager 整体改造为 cloudflared-manager，专注 Cloudflare
+Tunnel 多实例管理。不兼容 frps 时代的配置文件 / API / 环境变量。
+
+### 重大变更（破坏性）
+
+- **业务方向**：从 frps server 多实例管理 → cloudflared tunnel 多实例管理
+- **二进制名**：frpsmgrd → cfdmgrd
+- **管理命令**：fms → cfm
+- **Go 模块路径**：github.com/mia-clark/frps-manager → cloudflared-manager
+- **环境变量前缀**：FRPSMGR_ → CFDM_
+- **配置文件格式**：TOML → YAML
+- **数据目录**：/data → /var/lib/cfdmgrd
+- **删除路由**：所有 /api/v1/runtime/* （frps mem API 透传）
+- **新增路由**：/api/v1/binaries/*（cloudflared 二进制管理）
+
+### 新功能
+
+- 内嵌 cloudflared 多版本管理：UI 下载 / 切换 / 删除
+- YAML 配置 + token 安全编辑
+- ProcessTailer 结构化日志（JSON 解析 + 双轨兜底）
+- Prometheus 指标拉取（cloudflared --metrics）
+- 12 条默认告警模板（HA 断连 / 错误率 / 重连风暴 等）
+
+### 已知限制
+
+- Configs 完整 5 分组表单 → 后续 PR
+- Traffic 完整曲线 → 后续 PR
+- AES 加密导出 → 后续 PR
+
+---
+
+（以下保留原 frps-manager 历史 CHANGELOG）
 
 ## [Unreleased]
 

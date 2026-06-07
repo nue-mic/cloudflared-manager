@@ -1,5 +1,11 @@
 # frpsmgrd API 详细参考（frps 服务端管理器 · v1）
 
+> ⚠️ **DEPRECATED**：本文档是 frps-manager 时代的 API 字段表，**与 v2.0.0
+> cloudflared-manager 的 API 已不兼容**。新 API 字段以
+> `internal/api/configs.go` / `internal/api/binaries.go` Go 源码
+> 为权威，前端类型定义见 `web/src/api/types.ts`。完整 OpenAPI 文档
+> 重写留待后续 PR。
+
 > 本文件依据当前 [`internal/api`](../internal/api/) 与 [`internal/manager`](../internal/manager/) 实地核对生成，覆盖路径、请求体、响应体、错误码的全部字段。
 > 凡是与 [`internal/api/openapi.yaml`](../internal/api/openapi.yaml) 不一致之处，请同步修复两者；正常情况下二者完全等价。
 

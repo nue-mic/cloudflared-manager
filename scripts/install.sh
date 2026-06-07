@@ -1,14 +1,14 @@
 #!/bin/sh
 # =============================================================================
-# frpsmgrd 一键安装脚本 (frps-manager)
+# cfdmgrd 一键安装脚本 (cloudflared-manager)
 #
 #   支持: macOS / 各类 Linux (systemd / OpenRC / 通用回退)
 #   下载: 自动选择 curl 或 wget
 #   功能: 自动识别系统架构 -> 下载对应二进制 -> 安装 -> 注册系统服务 -> 开机自启
 #
 # 一行安装 (推荐, 支持交互):
-#   sh -c "$(curl -fsSL https://raw.githubusercontent.com/mia-clark/frps-manager/main/scripts/install.sh)"
-#   sh -c "$(wget -qO- https://raw.githubusercontent.com/mia-clark/frps-manager/main/scripts/install.sh)"
+#   sh -c "$(curl -fsSL https://raw.githubusercontent.com/mia-clark/cloudflared-manager/main/scripts/install.sh)"
+#   sh -c "$(wget -qO- https://raw.githubusercontent.com/mia-clark/cloudflared-manager/main/scripts/install.sh)"
 #
 # 非交互 / 自定义示例:
 #   sh install.sh --yes --port 9000 --token mysecret
@@ -16,7 +16,7 @@
 #   sh install.sh --uninstall
 #
 # 环境变量 (等价于命令行参数, 便于自动化):
-#   FRPSMGR_PORT=9000  FRPSMGR_API_TOKEN=xxx  FRPSMGR_VERSION=v1.2.10  ASSUME_YES=1
+#   CFDM_PORT=9000  CFDM_API_TOKEN=xxx  CFDM_VERSION=v1.2.10  ASSUME_YES=1
 # =============================================================================
 
 set -eu
@@ -24,10 +24,10 @@ set -eu
 # ----------------------------------------------------------------------------
 # 常量配置
 # ----------------------------------------------------------------------------
-REPO="mia-clark/frps-manager"
-BIN_NAME="frpsmgrd"
+REPO="mia-clark/cloudflared-manager"
+BIN_NAME="cfdmgrd"
 INSTALL_DIR="/usr/local/bin"
-SERVICE_NAME="frpsmgrd"
+SERVICE_NAME="cfdmgrd"
 DEFAULT_PORT="8080"
 
 # ----------------------------------------------------------------------------
@@ -35,7 +35,7 @@ DEFAULT_PORT="8080"
 #   - URL 拼装格式: ${PROXY}https://github.com/USER/REPO/releases/download/...
 #   - 安装时按此顺序挨个尝试; 每家失败/伪200自动跳下一家; 全失败回落直连
 #   - 数据基于 2026-06-05 实测（与姊妹仓库 frpc-manager 共享同一份代理列表）
-#   - 用户可通过 FRPSMGR_DOWNLOAD_PROXY=URL 强制指定单家; FRPSMGR_NO_PROXY=1 跳过全部代理
+#   - 用户可通过 CFDM_DOWNLOAD_PROXY=URL 强制指定单家; CFDM_NO_PROXY=1 跳过全部代理
 DL_PROXIES="
 https://gh-proxy.com/
 https://ghfast.top/
@@ -55,15 +55,15 @@ ARCH=""
 DATA_DIR=""
 ENV_FILE=""
 DOWNLOADER=""
-VERSION="${FRPSMGR_VERSION:-}"
-PORT="${FRPSMGR_PORT:-}"
-TOKEN="${FRPSMGR_API_TOKEN:-}"
+VERSION="${CFDM_VERSION:-}"
+PORT="${CFDM_PORT:-}"
+TOKEN="${CFDM_API_TOKEN:-}"
 ASSUME_YES="${ASSUME_YES:-0}"
 FORCE="0"
 ACTION="install"
 TMP_DIR=""
-DL_PROXY_OVERRIDE="${FRPSMGR_DOWNLOAD_PROXY:-}"  # 用户强制指定单家代理
-DL_NO_PROXY="${FRPSMGR_NO_PROXY:-0}"             # 1=完全跳过代理直连
+DL_PROXY_OVERRIDE="${CFDM_DOWNLOAD_PROXY:-}"  # 用户强制指定单家代理
+DL_NO_PROXY="${CFDM_NO_PROXY:-0}"             # 1=完全跳过代理直连
 
 # ----------------------------------------------------------------------------
 # 输出辅助 (带颜色, 非 TTY 自动降级为纯文本)
@@ -88,7 +88,7 @@ trap cleanup EXIT INT TERM
 # ----------------------------------------------------------------------------
 usage() {
     cat <<EOF
-${C_BOLD}frpsmgrd 一键安装脚本${C_RST}
+${C_BOLD}cfdmgrd 一键安装脚本${C_RST}
 
 用法: sh install.sh [选项]
 
@@ -118,9 +118,9 @@ ${C_BOLD}frpsmgrd 一键安装脚本${C_RST}
   sh install.sh --uninstall                     # 卸载
 
 环境变量等价形式 (适合 CI/自动化):
-  FRPSMGR_PORT=9000 FRPSMGR_API_TOKEN=xxx ASSUME_YES=1 sh install.sh
-  FRPSMGR_DOWNLOAD_PROXY=https://my.mirror/  # 等价 --proxy
-  FRPSMGR_NO_PROXY=1                          # 等价 --no-proxy
+  CFDM_PORT=9000 CFDM_API_TOKEN=xxx ASSUME_YES=1 sh install.sh
+  CFDM_DOWNLOAD_PROXY=https://my.mirror/  # 等价 --proxy
+  CFDM_NO_PROXY=1                          # 等价 --no-proxy
 
 下载策略:
   默认按内置代理数组挨个尝试 (公开代理 4 家在前, 自建 6 家在后), 第一个能
@@ -253,7 +253,7 @@ try_download() {
     _gh_url="$1"
     _dest="$2"
 
-    # 优先级: --proxy/$FRPSMGR_DOWNLOAD_PROXY > 内置数组 > 直连
+    # 优先级: --proxy/$CFDM_DOWNLOAD_PROXY > 内置数组 > 直连
     if [ -n "$DL_PROXY_OVERRIDE" ]; then
         _proxy="${DL_PROXY_OVERRIDE%/}/"   # 兜底加尾斜杠
         info "使用指定代理: ${_proxy}"
@@ -463,17 +463,17 @@ write_env_file() {
     priv mkdir -p "$(dirname "$ENV_FILE")"
     priv mkdir -p "$DATA_DIR"
     # 通过临时文件再 install, 避免重定向到特权路径的麻烦
-    _tmp_env="${TMP_DIR}/frpsmgrd.env"
+    _tmp_env="${TMP_DIR}/cfdmgrd.env"
     cat > "$_tmp_env" <<EOF
-# frpsmgrd 运行配置 (由 install.sh 生成)
-FRPSMGR_API_TOKEN=${TOKEN}
-FRPSMGR_HTTP_ADDR=:${PORT}
-FRPSMGR_DATA_DIR=${DATA_DIR}
-FRPSMGR_LOG_LEVEL=info
-FRPSMGR_CORS_ORIGINS=*
-FRPSMGR_DOCS_ENABLED=true
+# cfdmgrd 运行配置 (由 install.sh 生成)
+CFDM_API_TOKEN=${TOKEN}
+CFDM_HTTP_ADDR=:${PORT}
+CFDM_DATA_DIR=${DATA_DIR}
+CFDM_LOG_LEVEL=info
+CFDM_CORS_ORIGINS=*
+CFDM_DOCS_ENABLED=true
 # 是否允许在 Web 后台「关于」页一键自更新并重启 (true/false)
-FRPSMGR_SELF_UPDATE_ENABLED=true
+CFDM_SELF_UPDATE_ENABLED=true
 EOF
     priv install -m 0600 "$_tmp_env" "$ENV_FILE"
 }
@@ -500,7 +500,7 @@ setup_systemd() {
     _tmp_unit="${TMP_DIR}/${SERVICE_NAME}.service"
     cat > "$_tmp_unit" <<EOF
 [Unit]
-Description=frpsmgrd - FRP Manager Server
+Description=cfdmgrd - cloudflared multi-instance manager
 Documentation=https://github.com/${REPO}
 After=network-online.target
 Wants=network-online.target
@@ -534,7 +534,7 @@ setup_openrc() {
     cat > "$_tmp_init" <<EOF
 #!/sbin/openrc-run
 name="${SERVICE_NAME}"
-description="frpsmgrd - FRP Manager Server"
+description="cfdmgrd - cloudflared multi-instance manager"
 command="${INSTALL_DIR}/${BIN_NAME}"
 command_args="serve"
 command_background=true
@@ -578,15 +578,15 @@ setup_launchd() {
     </array>
     <key>EnvironmentVariables</key>
     <dict>
-        <key>FRPSMGR_API_TOKEN</key>
+        <key>CFDM_API_TOKEN</key>
         <string>${TOKEN}</string>
-        <key>FRPSMGR_HTTP_ADDR</key>
+        <key>CFDM_HTTP_ADDR</key>
         <string>:${PORT}</string>
-        <key>FRPSMGR_DATA_DIR</key>
+        <key>CFDM_DATA_DIR</key>
         <string>${DATA_DIR}</string>
-        <key>FRPSMGR_LOG_LEVEL</key>
+        <key>CFDM_LOG_LEVEL</key>
         <string>info</string>
-        <key>FRPSMGR_SELF_UPDATE_ENABLED</key>
+        <key>CFDM_SELF_UPDATE_ENABLED</key>
         <string>true</string>
     </dict>
     <key>RunAtLoad</key>
@@ -621,22 +621,22 @@ setup_service() {
 }
 
 # ----------------------------------------------------------------------------
-# 生成统一管理命令 fms (封装 服务管理 / 更新 / 卸载 / 信息查看)
-#   安装到 ${INSTALL_DIR}/fms (该目录已在 PATH 上, 全局可直接调用 fms <命令>)
+# 生成统一管理命令 cfm (封装 服务管理 / 更新 / 卸载 / 信息查看)
+#   安装到 ${INSTALL_DIR}/cfm (该目录已在 PATH 上, 全局可直接调用 cfm <命令>)
 # ----------------------------------------------------------------------------
 install_cli() {
-    _cli="${INSTALL_DIR}/fms"
+    _cli="${INSTALL_DIR}/cfm"
     info "安装管理命令: ${_cli}"
     # TMP_DIR 正常已由下载阶段创建; 兜底再建一次
     [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ] || TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t frpsmgr)"
-    _tmp_cli="${TMP_DIR}/fms"
+    _tmp_cli="${TMP_DIR}/cfm"
 
     # 头部: 注入安装期常量 (此 heredoc 不加引号, 变量会被展开并固化进脚本)
     cat > "$_tmp_cli" <<EOF
 #!/bin/sh
 # =============================================================================
-# fms — frpsmgrd 管理命令 (由 install.sh 自动生成, 请勿手动编辑)
-#   用法: fms <命令> [参数]   (fms help 查看全部命令)
+# cfm — cfdmgrd 管理命令 (由 install.sh 自动生成, 请勿手动编辑)
+#   用法: cfm <命令> [参数]   (cfm help 查看全部命令)
 # =============================================================================
 REPO="${REPO}"
 BIN_NAME="${BIN_NAME}"
@@ -672,8 +672,8 @@ priv() { $SUDO "$@"; }
 
 PLIST="/Library/LaunchDaemons/com.miaclark.${SERVICE_NAME}.plist"
 
-# 允许用镜像源覆盖 install.sh 下载地址 (适配国内网络): FRPSMGR_INSTALL_URL=https://镜像/install.sh
-if [ -n "${FRPSMGR_INSTALL_URL:-}" ]; then RAW_URL="$FRPSMGR_INSTALL_URL"; fi
+# 允许用镜像源覆盖 install.sh 下载地址 (适配国内网络): CFDM_INSTALL_URL=https://镜像/install.sh
+if [ -n "${CFDM_INSTALL_URL:-}" ]; then RAW_URL="$CFDM_INSTALL_URL"; fi
 
 # 运行期探测 init 系统 (与安装时解耦, 迁移/换系统也能用)
 detect_init() {
@@ -765,26 +765,26 @@ cmd_logs() {
 cli_panel() {
     printf "%b\n" "────────────────────────────────────────────"
     printf "%b\n" "  ${C_BOLD}管理命令 (已安装到 PATH, 任意目录可用):${C_RST}"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms start"     "启动服务"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms stop"      "停止服务"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms restart"   "重启服务"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms status"    "查看状态"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms logs -f"   "实时日志"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms info"      "查看完整信息"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms config"    "查看/编辑配置"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms update"    "更新到最新版"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms uninstall" "卸载"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms help"      "查看全部命令"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm start"     "启动服务"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm stop"      "停止服务"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm restart"   "重启服务"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm status"    "查看状态"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm logs -f"   "实时日志"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm info"      "查看完整信息"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm config"    "查看/编辑配置"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm update"    "更新到最新版"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm uninstall" "卸载"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm help"      "查看全部命令"
     printf "%b\n" "────────────────────────────────────────────"
 }
 # ----------------------------------------------------------------------------
-# 外网 IP 探测 (与 install.sh 同款逻辑, 此处独立内嵌, 让 fms 自包含)
+# 外网 IP 探测 (与 install.sh 同款逻辑, 此处独立内嵌, 让 cfm 自包含)
 # ----------------------------------------------------------------------------
 PUBIP_V4_URLS="https://4.ipw.cn https://api.ip.sb/ip https://api.ipify.org https://ifconfig.me/ip https://ipv4.icanhazip.com http://members.3322.org/dyndns/getip"
 PUBIP_V6_URLS="https://6.ipw.cn https://ipv6.icanhazip.com"
 
 detect_public_ips() {
-    _out="$(mktemp 2>/dev/null || echo "/tmp/fms_pubips.$$")"
+    _out="$(mktemp 2>/dev/null || echo "/tmp/cfm_pubips.$$")"
     : > "$_out"
     _pids=""
     for _u in $PUBIP_V4_URLS; do
@@ -838,10 +838,10 @@ print_url_line() {
 }
 
 cmd_info() {
-    _addr="$(env_get FRPSMGR_HTTP_ADDR)"; _port="${_addr#:}"; [ -n "$_port" ] || _port="8080"
-    _token="$(env_get FRPSMGR_API_TOKEN)"
-    _ddir="$(env_get FRPSMGR_DATA_DIR)";  [ -n "$_ddir" ] || _ddir="$DATA_DIR"
-    _loglv="$(env_get FRPSMGR_LOG_LEVEL)"; [ -n "$_loglv" ] || _loglv="info"
+    _addr="$(env_get CFDM_HTTP_ADDR)"; _port="${_addr#:}"; [ -n "$_port" ] || _port="8080"
+    _token="$(env_get CFDM_API_TOKEN)"
+    _ddir="$(env_get CFDM_DATA_DIR)";  [ -n "$_ddir" ] || _ddir="$DATA_DIR"
+    _loglv="$(env_get CFDM_LOG_LEVEL)"; [ -n "$_loglv" ] || _loglv="info"
     _ver="$("${INSTALL_DIR}/${BIN_NAME}" version 2>/dev/null || echo 未知)"
     case "$(detect_init)" in
         systemd) _svc="/etc/systemd/system/${SERVICE_NAME}.service"
@@ -855,7 +855,7 @@ cmd_info() {
                  _logc="tail -f /var/log/${SERVICE_NAME}.log" ;;
         *)       _svc="(未注册)"; _state="unknown"; _logc="(无)" ;;
     esac
-    printf "%b\n" "${C_BOLD}frpsmgrd 运行信息${C_RST}"
+    printf "%b\n" "${C_BOLD}cfdmgrd 运行信息${C_RST}"
     printf "%b\n" "────────────────────────────────────────────"
     printf "  版本     : %s\n" "$_ver"
     printf "  服务状态 : %s\n" "$_state"
@@ -866,7 +866,7 @@ cmd_info() {
     printf "  监听地址 : %s\n" "${_addr:-:8080}"
     printf "  日志级别 : %s\n" "$_loglv"
     printf "  程序路径 : %s\n" "${INSTALL_DIR}/${BIN_NAME}"
-    printf "  管理命令 : %s\n" "${INSTALL_DIR}/fms"
+    printf "  管理命令 : %s\n" "${INSTALL_DIR}/cfm"
     printf "  配置文件 : %s\n" "$ENV_FILE"
     printf "  数据目录 : %s\n" "$_ddir"
     printf "  服务文件 : %s\n" "$_svc"
@@ -878,7 +878,7 @@ cmd_config() {
     case "${1:-show}" in
         edit)
             priv "${EDITOR:-vi}" "$ENV_FILE"
-            warn "如修改了配置, 请执行 fms restart 使其生效"
+            warn "如修改了配置, 请执行 cfm restart 使其生效"
             ;;
         *)  priv cat "$ENV_FILE" ;;
     esac
@@ -888,13 +888,13 @@ cmd_update()    { fetch "$RAW_URL" | sh -s -- --update "$@"; }
 cmd_install()   { fetch "$RAW_URL" | sh -s -- "$@"; }
 cmd_uninstall() {
     fetch "$RAW_URL" | sh -s -- --uninstall
-    priv rm -f "${INSTALL_DIR}/fms" 2>/dev/null || true
+    priv rm -f "${INSTALL_DIR}/cfm" 2>/dev/null || true
 }
 
 usage() {
-    printf "%b\n" "${C_BOLD}fms — frpsmgrd 管理命令${C_RST}
+    printf "%b\n" "${C_BOLD}cfm — cfdmgrd 管理命令${C_RST}
 
-用法: fms <命令> [参数]
+用法: cfm <命令> [参数]
 
 服务管理:
   start            启动服务
@@ -921,7 +921,7 @@ usage() {
 # 子命令收尾的一行轻提示, 引导查看完整命令清单
 cli_tip() {
     printf "%b\n" "────────────────────────────────────────────"
-    printf "%b\n" "${C_BOLD}💡 输入 fms 查看全部命令${C_RST}"
+    printf "%b\n" "${C_BOLD}💡 输入 cfm 查看全部命令${C_RST}"
     printf "%b\n" "────────────────────────────────────────────"
 }
 
@@ -949,7 +949,7 @@ cli_tip
 FMS_EOF
 
     priv install -m 0755 "$_tmp_cli" "$_cli"
-    ok "管理命令已安装, 现在可直接使用: ${C_BOLD}fms <命令>${C_RST}"
+    ok "管理命令已安装, 现在可直接使用: ${C_BOLD}cfm <命令>${C_RST}"
 }
 
 # ----------------------------------------------------------------------------
@@ -966,13 +966,13 @@ get_installed_version() {
 # ----------------------------------------------------------------------------
 read_env_port() {
     if [ -f "$ENV_FILE" ]; then
-        _addr="$(grep '^FRPSMGR_HTTP_ADDR=' "$ENV_FILE" 2>/dev/null | head -n1 | cut -d= -f2)"
+        _addr="$(grep '^CFDM_HTTP_ADDR=' "$ENV_FILE" 2>/dev/null | head -n1 | cut -d= -f2)"
         echo "${_addr#:}"
     elif [ "$OS" = "darwin" ]; then
         _plist="/Library/LaunchDaemons/com.miaclark.${SERVICE_NAME}.plist"
         if [ -f "$_plist" ] && [ -x /usr/libexec/PlistBuddy ]; then
             _addr="$(priv /usr/libexec/PlistBuddy -c \
-                "Print :EnvironmentVariables:FRPSMGR_HTTP_ADDR" "$_plist" 2>/dev/null)"
+                "Print :EnvironmentVariables:CFDM_HTTP_ADDR" "$_plist" 2>/dev/null)"
             echo "${_addr#:}"
         fi
     fi
@@ -1036,7 +1036,7 @@ health_check() {
 # 安装总流程
 # ----------------------------------------------------------------------------
 do_install() {
-    printf "%b\n" "${C_BOLD}=== frpsmgrd 一键安装 ===${C_RST}"
+    printf "%b\n" "${C_BOLD}=== cfdmgrd 一键安装 ===${C_RST}"
     detect_platform
     detect_downloader
     ensure_root
@@ -1052,21 +1052,21 @@ do_install() {
     print_summary
 }
 
-# 打印 fms 管理命令清单 (安装 / 更新结尾共用, 方便用户直接照着敲)
+# 打印 cfm 管理命令清单 (安装 / 更新结尾共用, 方便用户直接照着敲)
 print_cli_hint() {
     printf "%b\n" "────────────────────────────────────────────"
     printf "%b\n" "  ${C_BOLD}管理命令 (已安装到 PATH, 任意目录可用):${C_RST}"
-    # %-13s 让命令列定宽左对齐 (最长 fms uninstall = 13)，颜色码只在格式串里、不参与宽度计算，# 自然对齐
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms start"     "启动服务"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms stop"      "停止服务"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms restart"   "重启服务"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms status"    "查看状态"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms logs -f"   "实时日志"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms info"      "查看完整信息"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms config"    "查看/编辑配置"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms update"    "更新到最新版"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms uninstall" "卸载"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "fms help"      "查看全部命令"
+    # %-13s 让命令列定宽左对齐 (最长 cfm uninstall = 13)，颜色码只在格式串里、不参与宽度计算，# 自然对齐
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm start"     "启动服务"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm stop"      "停止服务"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm restart"   "重启服务"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm status"    "查看状态"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm logs -f"   "实时日志"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm info"      "查看完整信息"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm config"    "查看/编辑配置"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm update"    "更新到最新版"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm uninstall" "卸载"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm help"      "查看全部命令"
     printf "%b\n" "────────────────────────────────────────────"
 }
 
@@ -1154,7 +1154,7 @@ print_summary() {
 # 全自动更新流程 (保留现有端口/令牌/数据, 仅替换二进制并重启服务)
 # ----------------------------------------------------------------------------
 do_update() {
-    printf "%b\n" "${C_BOLD}=== frpsmgrd 全自动更新 ===${C_RST}"
+    printf "%b\n" "${C_BOLD}=== cfdmgrd 全自动更新 ===${C_RST}"
     detect_platform
     detect_downloader
     ensure_root
@@ -1177,7 +1177,7 @@ do_update() {
 
     info "准备更新: ${C_BOLD}${_cur:-?}${C_RST} -> ${C_BOLD}${_target}${C_RST}"
     download_and_install            # 下载并覆盖二进制 (不动配置)
-    install_cli                     # 顺带刷新管理命令 fms 到最新
+    install_cli                     # 顺带刷新管理命令 cfm 到最新
     restart_service                 # 重启以加载新二进制
 
     # 尽力做一次健康检查 (端口取自现有配置)
@@ -1202,7 +1202,7 @@ do_update() {
 # 卸载流程
 # ----------------------------------------------------------------------------
 do_uninstall() {
-    printf "%b\n" "${C_BOLD}=== frpsmgrd 卸载 ===${C_RST}"
+    printf "%b\n" "${C_BOLD}=== cfdmgrd 卸载 ===${C_RST}"
     detect_platform
     ensure_root
 
@@ -1232,8 +1232,8 @@ do_uninstall() {
     priv rm -f "${INSTALL_DIR}/${BIN_NAME}"
     ok "已删除二进制 ${INSTALL_DIR}/${BIN_NAME}"
 
-    priv rm -f "${INSTALL_DIR}/fms"
-    ok "已删除管理命令 ${INSTALL_DIR}/fms"
+    priv rm -f "${INSTALL_DIR}/cfm"
+    ok "已删除管理命令 ${INSTALL_DIR}/cfm"
 
     prompt "是否同时删除配置文件与数据目录 (${DATA_DIR})? [y/N]" "N"
     case "$REPLY" in
