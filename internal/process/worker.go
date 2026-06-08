@@ -127,6 +127,13 @@ func Spawn(ctx context.Context, p SpawnParams) (*Worker, error) {
 		return nil, fmt.Errorf("process: start %s: %w", p.BinaryPath, err)
 	}
 
+	// Attach the freshly-spawned child to the cfdmgrd-process-wide Job
+	// Object on Windows so a hard kill of the daemon (taskkill /F, IDE
+	// debug stop, panic, BSOD) takes the child down with it. Failure is
+	// non-fatal: the orphan scanner (orphan.go) catches anything that
+	// slips through on next boot, and on non-Windows this is a no-op.
+	_ = attachToParentJob(cmd.Process.Pid)
+
 	w := &Worker{
 		cmd:       cmd,
 		done:      make(chan struct{}),

@@ -20,6 +20,7 @@ import (
 	"github.com/mia-clark/cloudflared-manager/internal/eventbus"
 	"github.com/mia-clark/cloudflared-manager/internal/manager"
 	"github.com/mia-clark/cloudflared-manager/internal/metrics"
+	"github.com/mia-clark/cloudflared-manager/internal/process"
 	"github.com/mia-clark/cloudflared-manager/pkg/version"
 )
 
@@ -90,6 +91,29 @@ func runServe(args []string) int {
 	binDl := &cfdbin.Downloader{
 		BaseURLs: cfg.ReleaseProxyBases,
 		Key:      cfg.ReleaseProxyKey,
+	}
+
+	// Arm the Windows Job Object (no-op on POSIX) so any cloudflared we
+	// spawn dies with us, even on taskkill /F / IDE debug-stop / panic.
+	// fail-open: orphan scanner below catches anything Job missed.
+	if err := process.InitParentJob(); err != nil {
+		logger.Warn("process: parent job init failed (kernel-level kill-on-exit not armed); relying on orphan scan",
+			slog.Any("err", err),
+		)
+	} else if process.ParentJobReady() {
+		logger.Info("process: parent job armed (kill-on-exit safety net active)")
+	}
+
+	// Sweep any cloudflared children left behind by a previous cfdmgrd
+	// run (panic, taskkill /F, BSOD). Restricted to our cfdbin store
+	// subtree so a user's hand-installed cloudflared cannot be touched.
+	if killed, err := process.ScanAndKillOrphans(binStore.Root(), logger); err != nil {
+		logger.Warn("process: orphan scan failed", slog.Any("err", err))
+	} else if len(killed) > 0 {
+		logger.Info("process: orphan scan terminated leftovers",
+			slog.Int("count", len(killed)),
+			slog.Any("pids", killed),
+		)
 	}
 
 	bus := eventbus.New(1024)
