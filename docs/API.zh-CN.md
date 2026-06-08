@@ -107,8 +107,10 @@ cloudflared 没有 per-tunnel 字节计数器，只暴露 Prometheus 指标。`G
 | `CFDM_LOG_LEVEL` | `info` | trace/debug/info/warn/error |
 | `CFDM_DOCS_ENABLED` | `true` | 是否挂载 `/api/docs/*` |
 | `CFDM_SELF_UPDATE_ENABLED` | `true` | 是否允许 Web 端一键自更新守护进程 |
-| `CFDM_DOWNLOAD_MIRRORS` | `https://gh-proxy.org/,https://gh-proxy.com/` | 下载 cloudflared 二进制时优先尝试的镜像前缀（CSV） |
-| `CFDM_GITHUB_TOKEN` | （空） | 拉取 GitHub release 元数据时的 PAT，用于抬高速率限制 |
+| `CFDM_RELEASE_PROXY_BASES` | 7 个 `gh-raw` 代理域名 | cloudflared 二进制下载走的 Release 代理域名（CSV，自动故障转移） |
+| `CFDM_RELEASE_PROXY_KEY` | `cloudflared-releases` | Release 代理的配置键 |
+| `CFDM_DOWNLOAD_MIRRORS` | `https://gh-proxy.org/,https://gh-proxy.com/` | 旧 GitHub 镜像前缀（CSV，仅自更新用；二进制下载已改走 Release 代理） |
+| `CFDM_GITHUB_TOKEN` | （空） | 可选（旧）；Release 代理无需 token |
 | `CFDM_BINARIES_DIR` | `{DATA_DIR}/bin/cloudflared` | cloudflared 二进制存储根目录 |
 | `CFDM_CLOUDFLARED_DEFAULT_VERSION` | `latest` | `POST /binaries/install` 省略 version 时的回退目标 |
 

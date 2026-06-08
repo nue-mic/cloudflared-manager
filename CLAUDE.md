@@ -106,8 +106,10 @@ API 烟测：`BASE=http://127.0.0.1:8080 TOKEN=dev bash scripts/api-smoke.sh`（
 | `CFDM_CORS_ORIGINS` | `*` | CORS 白名单 |
 | `CFDM_LOG_LEVEL` | `info` | trace/debug/info/warn/error |
 | `CFDM_DOCS_ENABLED` | `true` | 是否开放 `/api/docs` |
-| `CFDM_DOWNLOAD_MIRRORS` | `https://gh-proxy.org/,https://gh-proxy.com/` | cloudflared 二进制下载镜像（CSV） |
-| `CFDM_GITHUB_TOKEN` | （空） | 可选；提升 GitHub API 限流 |
+| `CFDM_RELEASE_PROXY_BASES` | 7 个 `gh-raw` 代理域名 | cloudflared 二进制下载走的 Release 代理域名（CSV，自动故障转移）；见 docs/三方对接_RELEASE_API.md |
+| `CFDM_RELEASE_PROXY_KEY` | `cloudflared-releases` | Release 代理的配置键 |
+| `CFDM_DOWNLOAD_MIRRORS` | `https://gh-proxy.org/,https://gh-proxy.com/` | 旧 GitHub 镜像（仅自更新用；二进制下载已改走 Release 代理） |
+| `CFDM_GITHUB_TOKEN` | （空） | 可选（旧）；Release 代理无需 token |
 | `CFDM_BINARIES_DIR` | `$DATA_DIR/bin/cloudflared` | 二进制存放目录 |
 | `CFDM_CLOUDFLARED_DEFAULT_VERSION` | `latest` | Install 省略 version 时的默认值 |
 | `CFDM_SELF_UPDATE_ENABLED` | `true` | 是否开放 Web 端自更新 |

@@ -28,12 +28,19 @@ type Config struct {
 	// BinariesDir is the root directory managed by cfdbin.Store.
 	// Defaults to {DataDir}/bin/cloudflared.
 	BinariesDir string
-	// DownloadMirrors is an ordered list of URL prefixes tried before
-	// hitting github.com directly. Comma-separated, may be empty.
+	// DownloadMirrors is a legacy list of GitHub mirror prefixes. Retained
+	// for the self-update path; the cloudflared binary downloader no longer
+	// uses it (it goes through ReleaseProxyBases instead).
 	DownloadMirrors []string
-	// GitHubToken is an optional GitHub personal-access-token used to
-	// raise the REST-API rate limit when fetching release metadata.
+	// GitHubToken is an optional GitHub personal-access-token (legacy; the
+	// release proxy needs no token).
 	GitHubToken string
+	// ReleaseProxyBases is the ordered list of GitHub-Release proxy domains
+	// the cloudflared binary downloader uses (see docs/三方对接_RELEASE_API.md).
+	// All are equivalent; failover is automatic. CSV via env, may override.
+	ReleaseProxyBases []string
+	// ReleaseProxyKey is the proxy config key mapped to cloudflare/cloudflared.
+	ReleaseProxyKey string
 	// CloudflaredDefaultVersion is the version string that /api/v1/binaries
 	// Install uses when the caller omits the "version" field.
 	// Default: "latest".
@@ -56,6 +63,9 @@ func Load() (*Config, error) {
 
 		DownloadMirrors:           splitCSV(getEnv("CFDM_DOWNLOAD_MIRRORS", "https://gh-proxy.org/,https://gh-proxy.com/")),
 		GitHubToken:               os.Getenv("CFDM_GITHUB_TOKEN"),
+		ReleaseProxyBases: splitCSV(getEnv("CFDM_RELEASE_PROXY_BASES",
+			"https://gh-raw.966788.xyz,https://gh-raw.988669.xyz,https://gh-raw.s03.qzz.io,https://gh-raw.s04.qzz.io,https://gh-raw.s05.qzz.io,https://gh-raw.s06.qzz.io,https://gh-raw.s07.qzz.io")),
+		ReleaseProxyKey:           getEnv("CFDM_RELEASE_PROXY_KEY", "cloudflared-releases"),
 		CloudflaredDefaultVersion: getEnv("CFDM_CLOUDFLARED_DEFAULT_VERSION", "latest"),
 		ShutdownWait:              10 * time.Second,
 	}

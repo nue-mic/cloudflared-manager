@@ -88,8 +88,8 @@ func runServe(args []string) int {
 
 	binStore := cfdbin.New(cfg.BinariesDir)
 	binDl := &cfdbin.Downloader{
-		Mirrors:     cfg.DownloadMirrors,
-		GitHubToken: cfg.GitHubToken,
+		BaseURLs: cfg.ReleaseProxyBases,
+		Key:      cfg.ReleaseProxyKey,
 	}
 
 	bus := eventbus.New(1024)

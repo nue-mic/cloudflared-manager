@@ -30,7 +30,9 @@ info:
       `CFDM_API_TOKEN`（必填，鉴权令牌）、`CFDM_HTTP_ADDR`（默认 `:8080`）、
       `CFDM_DATA_DIR`（默认 `/var/lib/cfdmgrd`）、`CFDM_CORS_ORIGINS`（默认 `*`）、
       `CFDM_LOG_LEVEL`（默认 `info`）、`CFDM_DOCS_ENABLED`（默认 `true`）、
-      `CFDM_DOWNLOAD_MIRRORS`（下载镜像前缀，逗号分隔）、`CFDM_GITHUB_TOKEN`（抬高 GitHub API 限额）、
+      `CFDM_RELEASE_PROXY_BASES`（cloudflared 二进制下载的 Release 代理域名，逗号分隔，自动故障转移）、
+      `CFDM_RELEASE_PROXY_KEY`（Release 代理配置键，默认 cloudflared-releases）、
+      `CFDM_DOWNLOAD_MIRRORS`（旧 GitHub 镜像前缀，仅自更新用）、`CFDM_GITHUB_TOKEN`（旧；代理无需 token）、
       `CFDM_BINARIES_DIR`（cloudflared 二进制存储目录）、
       `CFDM_CLOUDFLARED_DEFAULT_VERSION`（默认 `latest`）、`CFDM_SELF_UPDATE_ENABLED`（默认 `true`）。
 
