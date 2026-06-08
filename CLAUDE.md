@@ -132,3 +132,26 @@ Conventional Commits + **中文描述**，与现有历史一致：`feat(scope): 
 - **Windows 开发环境**：遵循全局 `windows-shell` 规范（禁 `&&`、bash 专有语法）。注意：含中文的 `.ps1` 必须带 UTF-8 BOM（PS 5.1 否则按 ANSI 误解析），但 `.cmd`/JSON/Go/TS 等不要 BOM。
 - 修改 `internal/api` 的请求/响应结构后，记得同步 `openapi.yaml`、`docs/API.zh-CN.md`，必要时跑 `npm run gen:api` 重生成前端 schema。
 - 验证以事实为准：声称「修好了」前，后端跑 `make test`/`go vet`，前端跑 `tsc -b`，涉及对接的再看一次真实 Network 请求（或跑 `scripts/api-smoke.sh`）。
+
+## 11. GitHub API / Git 访问令牌（强制）
+
+> ⚠️ 任何需要访问 `github.com/mia-clark/cloudflared-manager` 的 GitHub API（`actions/runs`、`pulls`、`issues`、release 状态、CI 日志等）或拉私有数据时，**必须**先加载本仓 token，不要再去问用户。
+
+**优先顺序**（命中即停）：
+
+1. 仓库内 `.claude.local/github-tokens.env`（已 git-ignored，**严禁** commit）
+2. 全局 `~/.claude/secrets/github-tokens.env`（在仓库外，永远安全）
+
+加载方式：
+
+```bash
+[ -f .claude.local/github-tokens.env ] && source .claude.local/github-tokens.env
+[ -f "$HOME/.claude/secrets/github-tokens.env" ] && source "$HOME/.claude/secrets/github-tokens.env"
+curl -H "Authorization: Bearer $GH_MIA_CLARK_TOKEN" https://api.github.com/repos/mia-clark/cloudflared-manager/...
+```
+
+**安全红线**：
+
+- token 明文绝不进 commit message / PR body / 公开聊天 / 截图 / 任何 push 到远端的内容（否则 GitHub secret-scanning 立即吊销）
+- `.gitignore` 已含 `.claude.local/` 与 `.claude/secrets/`，新建 token 文件请放在这两个目录之一
+- 若 token 失效：要求用户重发，不要把无效 token 留在历史里

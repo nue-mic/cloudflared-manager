@@ -7,7 +7,11 @@ node_modules/
 *.exe
 *.exe~
 .env
+.env.local
+.env.*.local
 .idea/
 .vscode/
 web/.vite/
 docs/.local/
+.claude.local/
+.claude/secrets/
