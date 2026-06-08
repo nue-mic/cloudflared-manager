@@ -141,9 +141,13 @@ func Spawn(ctx context.Context, p SpawnParams) (*Worker, error) {
 	// the child's final log lines on exit get truncated. We therefore drain
 	// both copies (they return on pipe EOF, i.e. when the child exits) and
 	// only THEN call cmd.Wait.
-	sink := p.LogSink
-	if sink == nil {
-		sink = io.Discard
+	//
+	// The two io.Copy goroutines share one sink; wrap it in a lockedWriter so
+	// concurrent Writes are serialised regardless of whether the caller-
+	// provided sink is itself thread-safe.
+	var sink io.Writer = io.Discard
+	if p.LogSink != nil {
+		sink = &lockedWriter{w: p.LogSink}
 	}
 	var copyWG sync.WaitGroup
 	copyWG.Add(2)
@@ -205,6 +209,21 @@ func (w *Worker) ExitErr() error {
 	default:
 		return nil
 	}
+}
+
+// lockedWriter serialises Write calls onto an inner io.Writer. Spawn wraps
+// the caller-provided sink with this so the stdout + stderr forwarder
+// goroutines cannot interleave a single Write — even when the sink is a
+// plain *bytes.Buffer (as it is in tests).
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
 
 // Stop terminates the child gracefully. It sends SIGTERM (or platform

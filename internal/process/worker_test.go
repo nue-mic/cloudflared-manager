@@ -5,11 +5,39 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/mia-clark/cloudflared-manager/internal/process"
 )
+
+// safeBuffer is a bytes.Buffer guarded by a mutex so the test goroutine
+// can call Bytes() while the forwarder goroutines inside Spawn are still
+// writing. Spawn already serialises Write calls between stdout/stderr,
+// but Bytes()/String() readers still need their own synchronisation.
+type safeBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *safeBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *safeBuffer) Bytes() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]byte(nil), s.buf.Bytes()...)
+}
+
+func (s *safeBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
 
 // sleepCmd returns the absolute path + args of a small "sleep forever"
 // command available on every supported platform. We avoid /bin/sh -c
@@ -33,7 +61,7 @@ func TestSpawn_EmptyBinary(t *testing.T) {
 
 func TestSpawn_StartAndStop(t *testing.T) {
 	bin, args := sleepCmd(t)
-	var sink bytes.Buffer
+	var sink safeBuffer
 	w, err := process.Spawn(context.Background(), process.SpawnParams{
 		BinaryPath:   bin,
 		Args:         args,
@@ -83,7 +111,7 @@ func TestSpawn_LogSinkReceivesOutput(t *testing.T) {
 		bin = "cmd.exe"
 		args = []string{"/c", "echo hello-from-child & powershell.exe -NoLogo -NoProfile -Command Start-Sleep -Seconds 60"}
 	}
-	var sink bytes.Buffer
+	var sink safeBuffer
 	w, err := process.Spawn(context.Background(), process.SpawnParams{
 		BinaryPath:   bin,
 		Args:         args,
