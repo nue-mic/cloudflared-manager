@@ -10,6 +10,8 @@
 // 本项目是 token 模式：ingress / public-hostname / origin 配置在 Cloudflare
 // Zero Trust dashboard 管理，这里只建模 connector 进程消费的参数 + token。
 
+import { stringify as stringifyYaml } from 'yaml';
+
 export interface FieldDef {
   /** 完整 YAML 路径，如 "edge.protocol"；顶层字段就是裸键如 "token" */
   path: string;
@@ -257,6 +259,42 @@ export function modelledEnvKeys(): string[] {
     }
   }
   return Array.from(new Set(out)).sort();
+}
+
+// setByPath 把 value 写入 root 的嵌套路径（如 "edge.protocol"）。
+function setByPath(root: Record<string, unknown>, path: string, value: unknown): void {
+  const parts = path.split('.');
+  let cur = root;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const k = parts[i];
+    if (typeof cur[k] !== 'object' || cur[k] === null || Array.isArray(cur[k])) {
+      cur[k] = {};
+    }
+    cur = cur[k] as Record<string, unknown>;
+  }
+  cur[parts[parts.length - 1]] = value;
+}
+
+// buildDraftYaml 按 CATALOG 顺序，把选中的字段路径拼成嵌套对象并渲染为 YAML 草稿。
+// 顺序恒定（跟随目录而非勾选顺序），便于实时预览与复制粘贴。
+export function buildDraftYaml(selected: string[]): string {
+  const set = new Set(selected);
+  const root: Record<string, unknown> = {};
+  let any = false;
+  for (const g of CATALOG) {
+    for (const f of g.fields) {
+      if (set.has(f.path)) {
+        setByPath(root, f.path, f.example);
+        any = true;
+      }
+    }
+  }
+  if (!any) return '';
+  try {
+    return stringifyYaml(root);
+  } catch {
+    return '';
+  }
 }
 
 /** 把一个字段的示例值渲染成可直接粘贴的 YAML 片段。 */

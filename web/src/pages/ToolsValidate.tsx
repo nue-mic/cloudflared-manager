@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Card,
   Space,
@@ -11,41 +11,43 @@ import {
   App,
   theme as antdTheme,
 } from 'antd';
-import { CheckCircleOutlined, CloseCircleOutlined, FileTextOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import {
+  CheckCircleOutlined, CloseCircleOutlined, FileTextOutlined, ThunderboltOutlined,
+  ReadOutlined,
+} from '@ant-design/icons';
+import { useLocation, useNavigate } from 'react-router-dom';
 import client from '../api/client';
+import { FULL_EXAMPLE, MINIMAL_EXAMPLE } from './configCatalog';
 
 const { Title, Text, Paragraph } = Typography;
-
-const SAMPLE_TOML = `tunnel: my-tunnel-id
-credentials-file: /etc/cloudflared/my-tunnel.json
-
-ingress:
-  - hostname: example.com
-    service: http://localhost:8080
-  - service: http_status:404
-`;
 
 interface ValidateResp {
   valid: boolean;
   errors?: string[];
+  warnings?: string[];
 }
 
 const ToolsValidate: React.FC = () => {
   const { token } = antdTheme.useToken();
   const { message } = App.useApp();
+  const location = useLocation();
+  const navigate = useNavigate();
+
   const [content, setContent] = useState('');
   const [result, setResult] = useState<ValidateResp | null>(null);
   const [loading, setLoading] = useState(false);
+  const [fromReference, setFromReference] = useState(false);
 
-  const submit = async () => {
-    if (!content.trim()) {
+  const submit = async (text?: string) => {
+    const body = (text ?? content).trim();
+    if (!body) {
       message.warning('请粘贴 YAML 配置内容');
       return;
     }
     setLoading(true);
     setResult(null);
     try {
-      const resp = await client.post<ValidateResp>('/api/v1/validate', content, {
+      const resp = await client.post<ValidateResp>('/api/v1/validate', body, {
         headers: { 'Content-Type': 'text/plain' },
       });
       setResult(resp.data);
@@ -53,11 +55,30 @@ const ToolsValidate: React.FC = () => {
       else message.error('配置存在问题，请查看下方明细');
     } catch (e: unknown) {
       const err = e as { response?: { data?: { error?: { message?: string } } } };
-      const msg = err.response?.data?.error?.message || '校验请求失败';
-      message.error(msg);
+      message.error(err.response?.data?.error?.message || '校验请求失败');
     } finally {
       setLoading(false);
     }
+  };
+
+  // 从「配置参考」页带草稿跳转过来：预填并自动校验一次，然后清掉路由 state
+  // 避免刷新/返回时重复触发。
+  useEffect(() => {
+    const incoming = (location.state as { yaml?: string } | null)?.yaml;
+    if (incoming && incoming.trim()) {
+      setContent(incoming);
+      setFromReference(true);
+      void submit(incoming);
+      navigate('.', { replace: true, state: null });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const insert = (yaml: string, label: string) => {
+    setContent(yaml);
+    setResult(null);
+    setFromReference(false);
+    message.success(`已插入${label}`);
   };
 
   return (
@@ -73,6 +94,16 @@ const ToolsValidate: React.FC = () => {
         </Space>
       </Card>
 
+      {fromReference && (
+        <Alert
+          type="info"
+          showIcon
+          icon={<ReadOutlined />}
+          message="已从「配置参考」载入草稿并自动校验"
+          action={<Button size="small" onClick={() => navigate('/tools/reference')}>返回配置参考</Button>}
+        />
+      )}
+
       <Card
         title={
           <Space>
@@ -81,11 +112,17 @@ const ToolsValidate: React.FC = () => {
           </Space>
         }
         extra={
-          <Space>
-            <Button size="small" onClick={() => setContent(SAMPLE_TOML)}>
-              填入示例
+          <Space wrap>
+            <Button size="small" icon={<ReadOutlined />} onClick={() => insert(FULL_EXAMPLE, '完整示例')}>
+              插入完整示例
             </Button>
-            <Button size="small" onClick={() => { setContent(''); setResult(null); }}>
+            <Button size="small" onClick={() => insert(MINIMAL_EXAMPLE, '最小示例')}>
+              最小示例
+            </Button>
+            <Button size="small" onClick={() => navigate('/tools/reference')}>
+              配置参考
+            </Button>
+            <Button size="small" onClick={() => { setContent(''); setResult(null); setFromReference(false); }}>
               清空
             </Button>
           </Space>
@@ -95,7 +132,7 @@ const ToolsValidate: React.FC = () => {
       >
         <Input.TextArea
           value={content}
-          onChange={(e) => setContent(e.target.value)}
+          onChange={(e) => { setContent(e.target.value); setFromReference(false); }}
           placeholder="粘贴 cloudflared 隧道 YAML，例如 edge.protocol / logging.logLevel / identity.label …"
           autoSize={{ minRows: 14, maxRows: 28 }}
           style={{
@@ -109,7 +146,7 @@ const ToolsValidate: React.FC = () => {
             type="primary"
             icon={<ThunderboltOutlined />}
             loading={loading}
-            onClick={submit}
+            onClick={() => submit()}
             disabled={!content.trim()}
           >
             开始校验
@@ -130,7 +167,18 @@ const ToolsValidate: React.FC = () => {
               showIcon
               icon={<CheckCircleOutlined />}
               message="配置完全合法"
-              description="该配置可被 cloudflared 正常加载。"
+              description={
+                <div>
+                  <div>该配置可被 cloudflared 正常加载。</div>
+                  {(result.warnings ?? []).length > 0 && (
+                    <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
+                      {(result.warnings ?? []).map((w, i) => (
+                        <li key={i}><Text type="warning" style={{ fontSize: 12.5 }}>{w}</Text></li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              }
               style={{ borderRadius: 10 }}
             />
           ) : (

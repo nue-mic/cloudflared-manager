@@ -1,19 +1,21 @@
 import { useMemo, useState } from 'react';
 import {
-  Card, Space, Typography, Tag, Table, Input, Switch, Button, Alert, Divider, App,
+  Card, Space, Typography, Tag, Table, Input, Switch, Button, Alert, Divider, Empty, Row, Col, App,
   theme as antdTheme,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import type { TableProps } from 'antd';
+import type { Key } from 'react';
 import {
   ReadOutlined, CopyOutlined, SearchOutlined, ThunderboltOutlined,
-  SafetyCertificateOutlined, ToolOutlined,
+  SafetyCertificateOutlined, ToolOutlined, ClearOutlined, FileTextOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 
 import {
   CATALOG, EXTRA_ALLOWED_ENV, RESERVED_ENV, modelledEnvKeys,
-  fieldSnippet, FULL_EXAMPLE, MINIMAL_EXAMPLE,
-  type CatalogGroup, type FieldDef,
+  fieldSnippet, buildDraftYaml, FULL_EXAMPLE, MINIMAL_EXAMPLE,
+  type FieldDef,
 } from './configCatalog';
 
 const { Title, Text, Paragraph } = Typography;
@@ -26,6 +28,7 @@ const ConfigReference: React.FC = () => {
 
   const [query, setQuery] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(true);
+  const [selected, setSelected] = useState<string[]>([]); // 选入草稿的字段 path
 
   const copy = (s: string, tip = '已复制') => {
     navigator.clipboard.writeText(s).then(
@@ -50,18 +53,36 @@ const ConfigReference: React.FC = () => {
     })).filter((g) => g.fields.length > 0);
   }, [q, showAdvanced]);
 
-  const columns = (group: CatalogGroup): ColumnsType<FieldDef> => [
+  const draftYaml = useMemo(() => buildDraftYaml(selected), [selected]);
+
+  // rowSelection：仅在「当前可见行」范围内增删，过滤掉的已选字段保持不变。
+  const rowSelectionFor = (renderedFields: FieldDef[]): TableProps<FieldDef>['rowSelection'] => {
+    const visible = new Set(renderedFields.map((f) => f.path));
+    return {
+      columnTitle: '草稿',
+      columnWidth: 56,
+      selectedRowKeys: renderedFields.filter((f) => selected.includes(f.path)).map((f) => f.path),
+      onChange: (keys: Key[]) => {
+        setSelected((prev) => [
+          ...prev.filter((p) => !visible.has(p)),
+          ...keys.map(String),
+        ]);
+      },
+    };
+  };
+
+  const columns: ColumnsType<FieldDef> = [
     {
       title: '字段',
       dataIndex: 'path',
       key: 'path',
-      width: 220,
+      width: 200,
       render: (path: string, f) => (
         <Space size={4} wrap>
           <Text code copyable={{ text: path, tooltips: ['复制键名', '已复制'] }} style={{ fontFamily: MONO, fontSize: 12.5 }}>
             {path}
           </Text>
-          {f.advanced && <Tag color="default" style={{ marginInlineStart: 0 }}>高级</Tag>}
+          {f.advanced && <Tag style={{ marginInlineStart: 0 }}>高级</Tag>}
         </Space>
       ),
     },
@@ -69,13 +90,14 @@ const ConfigReference: React.FC = () => {
       title: '类型',
       dataIndex: 'type',
       key: 'type',
-      width: 130,
+      width: 120,
+      responsive: ['lg'],
       render: (t: string) => <Tag color="blue" style={{ fontFamily: MONO, fontSize: 11.5 }}>{t}</Tag>,
     },
     {
       title: '允许值 / 默认',
       key: 'allowed',
-      width: 230,
+      width: 210,
       render: (_, f) => (
         <div style={{ fontSize: 12.5, lineHeight: 1.6 }}>
           {f.allowed && <div>{f.allowed}</div>}
@@ -83,11 +105,7 @@ const ConfigReference: React.FC = () => {
             <Text type="secondary" style={{ fontSize: 12 }}>默认：</Text>
             <Text style={{ fontFamily: MONO, fontSize: 12 }}>{f.default || '—'}</Text>
           </div>
-          {f.constraint && (
-            <div>
-              <Text type="warning" style={{ fontSize: 11.5 }}>约束：{f.constraint}</Text>
-            </div>
-          )}
+          {f.constraint && <div><Text type="warning" style={{ fontSize: 11.5 }}>约束：{f.constraint}</Text></div>}
         </div>
       ),
     },
@@ -95,13 +113,12 @@ const ConfigReference: React.FC = () => {
       title: '对应 env',
       dataIndex: 'env',
       key: 'env',
-      width: 200,
+      width: 190,
+      responsive: ['xl'],
       render: (e: string) =>
-        e && e.startsWith('TUNNEL_') ? (
-          <Text code style={{ fontFamily: MONO, fontSize: 11.5 }}>{e}</Text>
-        ) : (
-          <Text type="secondary" style={{ fontSize: 12 }}>{e || '—'}</Text>
-        ),
+        e && e.startsWith('TUNNEL_')
+          ? <Text code style={{ fontFamily: MONO, fontSize: 11.5 }}>{e}</Text>
+          : <Text type="secondary" style={{ fontSize: 12 }}>{e || '—'}</Text>,
     },
     {
       title: '说明',
@@ -112,42 +129,35 @@ const ConfigReference: React.FC = () => {
     {
       title: '',
       key: 'op',
-      width: 88,
+      width: 72,
       align: 'right',
-      render: (_, f) => (
-        <Button
-          size="small"
-          type="text"
-          icon={<CopyOutlined />}
-          onClick={() => copy(fieldSnippet(group, f), `已复制 ${f.path} 片段`)}
-        >
-          片段
-        </Button>
-      ),
+      render: (_, f) => {
+        const g = groups.find((gg) => gg.fields.includes(f)) || groups[0];
+        return (
+          <Button
+            size="small"
+            type="text"
+            icon={<CopyOutlined />}
+            onClick={() => copy(fieldSnippet(g, f), `已复制 ${f.path} 片段`)}
+            title="复制该字段 YAML 片段"
+          >
+            片段
+          </Button>
+        );
+      },
     },
   ];
 
-  const CodeBlock: React.FC<{ code: string; copyTip?: string }> = ({ code, copyTip }) => (
+  const CodeBlock: React.FC<{ code: string; copyTip?: string; maxHeight?: number }> = ({ code, copyTip, maxHeight }) => (
     <div style={{ position: 'relative' }}>
-      <Button
-        size="small"
-        icon={<CopyOutlined />}
-        onClick={() => copy(code, copyTip)}
-        style={{ position: 'absolute', top: 8, right: 8, zIndex: 1 }}
-      >
+      <Button size="small" icon={<CopyOutlined />} onClick={() => copy(code, copyTip)} style={{ position: 'absolute', top: 8, right: 8, zIndex: 1 }}>
         复制
       </Button>
       <pre
         style={{
-          margin: 0,
-          padding: '14px 16px',
-          background: '#0b0f14',
-          color: '#cdd6e4',
-          borderRadius: 8,
-          fontFamily: MONO,
-          fontSize: 12.5,
-          lineHeight: 1.65,
-          overflowX: 'auto',
+          margin: 0, padding: '14px 16px', background: '#0b0f14', color: '#cdd6e4',
+          borderRadius: 8, fontFamily: MONO, fontSize: 12.5, lineHeight: 1.65,
+          overflowX: 'auto', maxHeight, overflowY: maxHeight ? 'auto' : undefined,
           border: `1px solid ${token.colorBorderSecondary}`,
         }}
       >
@@ -157,6 +167,34 @@ const ConfigReference: React.FC = () => {
   );
 
   const modelled = modelledEnvKeys();
+
+  const draftPanel = (
+    <Card
+      title={<Space><FileTextOutlined /> 草稿 YAML · 实时预览</Space>}
+      extra={<Tag color={selected.length ? 'processing' : 'default'}>{selected.length} 字段</Tag>}
+      style={{ borderRadius: 10 }}
+      styles={{ header: { background: token.colorFillTertiary } }}
+    >
+      {draftYaml ? (
+        <>
+          <CodeBlock code={draftYaml} copyTip="已复制草稿 YAML" maxHeight={420} />
+          <Space wrap style={{ marginTop: 12 }}>
+            <Button type="primary" icon={<CopyOutlined />} onClick={() => copy(draftYaml, '已复制草稿 YAML')}>复制草稿</Button>
+            <Button icon={<ToolOutlined />} onClick={() => navigate('/tools/validate', { state: { yaml: draftYaml } })}>去校验这段草稿</Button>
+            <Button danger type="text" icon={<ClearOutlined />} onClick={() => setSelected([])}>清空</Button>
+          </Space>
+          <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 10, marginBottom: 0 }}>
+            勾选左侧每个字段的「草稿」复选框即可拼装；token 为占位符，记得替换为真实令牌。
+          </Paragraph>
+        </>
+      ) : (
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description={<Text type="secondary" style={{ fontSize: 13 }}>勾选左侧字段的「草稿」复选框，自动拼装并在此实时预览 YAML。</Text>}
+        />
+      )}
+    </Card>
+  );
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -169,9 +207,7 @@ const ConfigReference: React.FC = () => {
             </div>
             <div>
               <Title level={2} style={{ color: '#fff', margin: 0, fontWeight: 700 }}>配置参考 · YAML 参数速查</Title>
-              <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 13.5 }}>
-                cloudflared 隧道（token 模式）全部可配参数，逐字段可复制
-              </Text>
+              <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 13.5 }}>cloudflared 隧道（token 模式）全部可配参数，逐字段可复制 / 可拼装草稿</Text>
             </div>
           </Space>
         </div>
@@ -196,14 +232,7 @@ const ConfigReference: React.FC = () => {
       <Card styles={{ body: { padding: 12 } }} style={{ borderRadius: 10 }}>
         <Space wrap size={12} style={{ width: '100%', justifyContent: 'space-between' }}>
           <Space wrap size={12}>
-            <Input
-              allowClear
-              prefix={<SearchOutlined />}
-              placeholder="搜索字段 / env / 说明…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              style={{ width: 280 }}
-            />
+            <Input allowClear prefix={<SearchOutlined />} placeholder="搜索字段 / env / 说明…" value={query} onChange={(e) => setQuery(e.target.value)} style={{ width: 260 }} />
             <Space size={6}>
               <Switch checked={showAdvanced} onChange={setShowAdvanced} size="small" />
               <Text type="secondary" style={{ fontSize: 13 }}>显示高级参数</Text>
@@ -222,38 +251,47 @@ const ConfigReference: React.FC = () => {
         <CodeBlock code={FULL_EXAMPLE} copyTip="已复制完整示例" />
       </Card>
 
-      {/* 分组参数表 */}
-      {groups.map((g) => (
-        <Card
-          key={g.key}
-          title={
-            <Space>
-              <SafetyCertificateOutlined style={{ color: token.colorPrimary }} />
-              <span>{g.title}</span>
-              {g.yamlKey && <Tag color="purple" style={{ fontFamily: MONO }}>{g.yamlKey}:</Tag>}
-            </Space>
-          }
-          extra={<Text type="secondary" style={{ fontSize: 12 }}>{g.fields.length} 项</Text>}
-          style={{ borderRadius: 10 }}
-          styles={{ header: { background: token.colorFillTertiary } }}
-        >
-          <Paragraph type="secondary" style={{ marginTop: -4, marginBottom: 12, fontSize: 13 }}>{g.desc}</Paragraph>
-          <Table<FieldDef>
-            size="small"
-            rowKey="path"
-            columns={columns(g)}
-            dataSource={g.fields}
-            pagination={false}
-            scroll={{ x: 880 }}
-          />
-        </Card>
-      ))}
-
-      {groups.length === 0 && (
-        <Card style={{ borderRadius: 10, textAlign: 'center', padding: 24 }}>
-          <Text type="secondary">没有匹配「{query}」的字段。</Text>
-        </Card>
-      )}
+      {/* 主体：左参数表 + 右草稿（窄屏自动堆叠） */}
+      <Row gutter={16}>
+        <Col xs={24} lg={15}>
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            {groups.map((g) => (
+              <Card
+                key={g.key}
+                title={
+                  <Space>
+                    <SafetyCertificateOutlined style={{ color: token.colorPrimary }} />
+                    <span>{g.title}</span>
+                    {g.yamlKey && <Tag color="purple" style={{ fontFamily: MONO }}>{g.yamlKey}:</Tag>}
+                  </Space>
+                }
+                extra={<Text type="secondary" style={{ fontSize: 12 }}>{g.fields.length} 项</Text>}
+                style={{ borderRadius: 10 }}
+                styles={{ header: { background: token.colorFillTertiary } }}
+              >
+                <Paragraph type="secondary" style={{ marginTop: -4, marginBottom: 12, fontSize: 13 }}>{g.desc}</Paragraph>
+                <Table<FieldDef>
+                  size="small"
+                  rowKey="path"
+                  columns={columns}
+                  dataSource={g.fields}
+                  pagination={false}
+                  scroll={{ x: 'max-content' }}
+                  rowSelection={rowSelectionFor(g.fields)}
+                />
+              </Card>
+            ))}
+            {groups.length === 0 && (
+              <Card style={{ borderRadius: 10, textAlign: 'center', padding: 24 }}>
+                <Text type="secondary">没有匹配「{query}」的字段。</Text>
+              </Card>
+            )}
+          </Space>
+        </Col>
+        <Col xs={24} lg={9}>
+          <div style={{ position: 'sticky', top: 16 }}>{draftPanel}</div>
+        </Col>
+      </Row>
 
       {/* env 白名单 */}
       <Card title={<Space><ThunderboltOutlined /> advancedEnvOverrides · 可用与保留的 env</Space>} style={{ borderRadius: 10 }} styles={{ header: { background: token.colorFillTertiary } }}>
@@ -285,19 +323,14 @@ const ConfigReference: React.FC = () => {
         <Text strong style={{ fontSize: 13 }}>③ 保留键（cfdmgrd 自管，无法覆盖）</Text>
         <div style={{ margin: '8px 0 16px' }}>
           <Space wrap size={[6, 8]}>
-            {RESERVED_ENV.map((k) => (
-              <Tag key={k} color="red" style={{ fontFamily: MONO, fontSize: 11.5 }}>{k}</Tag>
-            ))}
+            {RESERVED_ENV.map((k) => (<Tag key={k} color="red" style={{ fontFamily: MONO, fontSize: 11.5 }}>{k}</Tag>))}
           </Space>
         </div>
 
         <Divider style={{ margin: '8px 0 14px' }} />
         <Text strong style={{ fontSize: 13 }}>示例片段</Text>
         <div style={{ marginTop: 8 }}>
-          <CodeBlock
-            code={`advancedEnvOverrides:\n  TUNNEL_DNS_RESOLVER_ADDRS: 1.1.1.1,1.0.0.1\n  TUNNEL_METRICS_UPDATE_FREQ: 5s\n`}
-            copyTip="已复制 advancedEnvOverrides 示例"
-          />
+          <CodeBlock code={`advancedEnvOverrides:\n  TUNNEL_DNS_RESOLVER_ADDRS: 1.1.1.1,1.0.0.1\n  TUNNEL_METRICS_UPDATE_FREQ: 5s\n`} copyTip="已复制 advancedEnvOverrides 示例" />
         </div>
       </Card>
 
