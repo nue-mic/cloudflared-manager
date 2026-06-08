@@ -827,19 +827,31 @@ cmd_logs() {
             ;;
     esac
 }
-# 管理命令面板 (info 命令底部展示)
+# 管理命令面板 (info 命令底部展示) — 分四组列示 18 命令
 cli_panel() {
     printf "%b\n" "────────────────────────────────────────────"
     printf "%b\n" "  ${C_BOLD}管理命令 (已安装到 PATH, 任意目录可用):${C_RST}"
+    printf "  %b\n" "${C_BOLD}[服务管理]${C_RST}"
     printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm start"     "启动服务"
     printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm stop"      "停止服务"
     printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm restart"   "重启服务"
     printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm status"    "查看状态"
     printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm logs -f"   "实时日志"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm enable"    "开机自启"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm disable"   "取消自启"
+    printf "  %b\n" "${C_BOLD}[信息查看]${C_RST}"
     printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm info"      "查看完整信息"
     printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm config"    "查看/编辑配置"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm update"    "更新到最新版"
-    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm uninstall" "卸载"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm version"   "显示版本"
+    printf "  %b\n" "${C_BOLD}[安装维护]${C_RST}"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm install"   "重新安装 (--version=X)"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm update"    "更新到最新版 (--version=X)"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm uninstall" "卸载 (--purge 清数据)"
+    printf "  %b\n" "${C_BOLD}[进阶]${C_RST}"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm doctor"    "8 项健康自检"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm backup"    "备份配置与数据"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm restore"   "从备份恢复"
+    printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm watch"     "实时面板 (q 退出)"
     printf "    ${C_BOLD}%-13s${C_RST} # %s\n" "cfm help"      "查看全部命令"
     printf "%b\n" "────────────────────────────────────────────"
 }
@@ -950,11 +962,795 @@ cmd_config() {
     esac
 }
 cmd_version()   { "${INSTALL_DIR}/${BIN_NAME}" version; }
-cmd_update()    { fetch "$RAW_URL" | sh -s -- --update "$@"; }
-cmd_install()   { fetch "$RAW_URL" | sh -s -- "$@"; }
+
+# 把 cfm 风格的 --version=X / -v X 统一翻译成 install.sh 接受的 -v X 形式
+_translate_version_args() {
+    _out=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --version=*)
+                _v="${1#--version=}"
+                _out="$_out -v $_v"
+                shift
+                ;;
+            --version|-v)
+                [ $# -ge 2 ] || die "--version 缺少参数"
+                _out="$_out -v $2"
+                shift 2
+                ;;
+            *)
+                _out="$_out $1"
+                shift
+                ;;
+        esac
+    done
+    printf "%s" "$_out"
+}
+
+cmd_update() {
+    _args="$(_translate_version_args "$@")"
+    # shellcheck disable=SC2086
+    fetch "$RAW_URL" | sh -s -- --update $_args
+}
+cmd_install() {
+    _args="$(_translate_version_args "$@")"
+    # shellcheck disable=SC2086
+    fetch "$RAW_URL" | sh -s -- $_args
+}
 cmd_uninstall() {
+    _purge=0
+    for _a in "$@"; do
+        case "$_a" in
+            --purge) _purge=1 ;;
+        esac
+    done
     fetch "$RAW_URL" | sh -s -- --uninstall
     priv rm -f "${INSTALL_DIR}/cfm" 2>/dev/null || true
+    if [ "$_purge" = "1" ]; then
+        _ddir="$(env_get CFDM_DATA_DIR)"; [ -n "$_ddir" ] || _ddir="$DATA_DIR"
+        if [ -n "$_ddir" ] && [ -d "$_ddir" ]; then
+            warn "--purge: 删除数据目录 $_ddir"
+            priv rm -rf "$_ddir"
+        fi
+        if [ -f "$ENV_FILE" ]; then
+            warn "--purge: 删除配置文件 $ENV_FILE"
+            priv rm -rf "$(dirname "$ENV_FILE")"
+        fi
+        ok "已彻底清理 (--purge)"
+    fi
+}
+
+# ----------------------------------------------------------------------------
+# cfm doctor — 8 项健康自检
+# ----------------------------------------------------------------------------
+DOC_OK=0; DOC_WARN=0; DOC_FAIL=0
+_doc_pass() { DOC_OK=$((DOC_OK + 1));   printf "[%s] %b %s\n" "$1" "${C_GRN}OK${C_RST}"   "$2"; }
+_doc_warn() { DOC_WARN=$((DOC_WARN + 1)); printf "[%s] %b %s\n" "$1" "${C_YLW}WARN${C_RST}" "$2"; }
+_doc_fail() { DOC_FAIL=$((DOC_FAIL + 1)); printf "[%s] %b %s\n" "$1" "${C_RED}FAIL${C_RST}" "$2"; }
+
+# HTTP 状态码探测 (不打印响应体, 防泄漏)。用法: _doc_http <url> [bearer_token]
+#
+# 实现要点:
+#   1. curl 失败 (connect refused / DNS) 时 `-w '%{http_code}'` 已经把 `000` 写到 stdout,
+#      然后 `|| echo 000` 又追加一次, 最终捕获到 `000000` —— doctor case 里 `000` 分支会失配,
+#      落到通配符 `*` 上把『不可达』误判成 WARN。修复: 用 case 把非纯数字或为空的输出收敛为 `000`。
+#   2. token 不能经 `-H "Authorization: Bearer $_t"` 直接放命令行 —— 同主机其它用户经
+#      `ps auxww` / `/proc/<pid>/cmdline` 可读, 会泄漏 CFDM_API_TOKEN。改为
+#      `curl -K -` 从 stdin 读 header 配置 (wget 写临时文件 + chmod 600), 命令行不再出现 token。
+_doc_http_code() {
+    _u="$1"; _t="${2:-}"
+    _code=""
+    if command -v curl >/dev/null 2>&1; then
+        if [ -n "$_t" ]; then
+            # 经 stdin 传 header, 避免 token 暴露到 ps argv / /proc/<pid>/cmdline
+            _code="$(printf 'header = "Authorization: Bearer %s"\n' "$_t" \
+                | curl -s -o /dev/null -w '%{http_code}' --max-time 4 -K - "$_u" 2>/dev/null)"
+        else
+            _code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "$_u" 2>/dev/null)"
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if [ -n "$_t" ]; then
+            # wget 没有等价 stdin 配置, 退而求其次: 写 600 临时文件后 --config
+            _wcfg="$(mktemp 2>/dev/null || echo "/tmp/_doc_wget_$$")"
+            (umask 077; printf 'header = Authorization: Bearer %s\n' "$_t" > "$_wcfg") 2>/dev/null
+            _code="$(wget --config="$_wcfg" --server-response --timeout=4 --tries=1 -O /dev/null "$_u" 2>&1 \
+                | awk '/HTTP\// {code=$2} END{print (code?code:"")}')"
+            rm -f "$_wcfg" 2>/dev/null || true
+        else
+            _code="$(wget --server-response --timeout=4 --tries=1 -O /dev/null "$_u" 2>&1 \
+                | awk '/HTTP\// {code=$2} END{print (code?code:"")}')"
+        fi
+    fi
+    # 收敛: 空 / 非纯数字一律归 000, 避免 doctor case 落到通配符
+    case "$_code" in
+        ''|*[!0-9]*) _code="000" ;;
+    esac
+    printf '%s' "$_code"
+}
+
+doctor_check_1() {
+    _state=""
+    case "$(detect_init)" in
+        systemd) _state="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)" ;;
+        openrc)  rc-service "$SERVICE_NAME" status >/dev/null 2>&1 && _state="active" || _state="inactive" ;;
+        launchd) launchctl list 2>/dev/null | grep -q "$SERVICE_NAME" && _state="active" || _state="inactive" ;;
+        *)
+            if pgrep -x "$BIN_NAME" >/dev/null 2>&1; then _state="active"; else _state="inactive"; fi
+            ;;
+    esac
+    _pid=""
+    if command -v pgrep >/dev/null 2>&1; then _pid="$(pgrep -x "$BIN_NAME" 2>/dev/null | head -n1)"; fi
+    if [ "$_state" = "active" ]; then
+        _doc_pass "1/8" "daemon 进程存活${_pid:+ (PID $_pid)}"
+    else
+        _doc_fail "1/8" "daemon 未运行 (state=$_state)"
+    fi
+}
+
+doctor_check_2() {
+    _addr="$(env_get CFDM_HTTP_ADDR)"; _port="${_addr#:}"; [ -n "$_port" ] || _port="8080"
+    _code="$(_doc_http_code "http://127.0.0.1:${_port}/api/v1/health")"
+    if [ "$_code" = "200" ]; then
+        _doc_pass "2/8" "HTTP :${_port} 可达 (200)"
+    else
+        _doc_fail "2/8" "HTTP :${_port} 不可达 (code=$_code)"
+    fi
+}
+
+doctor_check_3() {
+    _addr="$(env_get CFDM_HTTP_ADDR)"; _port="${_addr#:}"; [ -n "$_port" ] || _port="8080"
+    _tok="$(env_get CFDM_API_TOKEN)"
+    if [ -z "$_tok" ]; then
+        _doc_warn "3/8" "API token 未读取到 (检查 $ENV_FILE)"
+        return
+    fi
+    _code="$(_doc_http_code "http://127.0.0.1:${_port}/api/v1/version" "$_tok")"
+    case "$_code" in
+        200) _doc_pass "3/8" "API token 鉴权通过 (200)" ;;
+        401|403) _doc_fail "3/8" "API token 鉴权失败 (code=$_code)" ;;
+        *) _doc_fail "3/8" "API 版本端点不可达 (code=$_code)" ;;
+    esac
+}
+
+doctor_check_4() {
+    _ddir="$(env_get CFDM_DATA_DIR)"; [ -n "$_ddir" ] || _ddir="$DATA_DIR"
+    _bindir="$(env_get CFDM_BINARIES_DIR)"; [ -n "$_bindir" ] || _bindir="${_ddir}/bin/cloudflared"
+    if [ ! -d "$_bindir" ]; then
+        _doc_warn "4/8" "cloudflared 二进制目录不存在: $_bindir (面板下载后会创建)"
+        return
+    fi
+    # 任一子目录里只要有可执行 cloudflared / cloudflared.exe 即视为通过
+    _found=""
+    for _sub in "$_bindir"/*; do
+        [ -d "$_sub" ] || continue
+        if [ -x "${_sub}/cloudflared" ] || [ -x "${_sub}/cloudflared.exe" ]; then
+            _found="${_sub##*/}"
+            break
+        fi
+    done
+    if [ -n "$_found" ]; then
+        _doc_pass "4/8" "cloudflared 二进制存在 (版本: $_found)"
+    else
+        _doc_warn "4/8" "未在 $_bindir 下找到可执行 cloudflared (面板可下载)"
+    fi
+}
+
+doctor_check_5() {
+    _ddir="$(env_get CFDM_DATA_DIR)"; [ -n "$_ddir" ] || _ddir="$DATA_DIR"
+    if [ ! -d "$_ddir" ]; then
+        _doc_fail "5/8" "数据目录不存在: $_ddir"
+        return
+    fi
+    _t="${_ddir}/.cfm_doctor_$$"
+    if (touch "$_t" 2>/dev/null) && rm -f "$_t" 2>/dev/null; then
+        _doc_pass "5/8" "数据目录可写: $_ddir"
+    else
+        # 非 root 时若 sudo 凭据未缓存, `priv sh -c ...` 会从控制终端读密码,
+        # 2>/dev/null 屏蔽不掉提示符回显, doctor 会静默卡死。
+        # 强制 -n (非交互), 需密码立即返回非零, doctor 给可读提示而非阻塞。
+        if [ -n "$SUDO" ] && command -v sudo >/dev/null 2>&1; then
+            if sudo -n sh -c "touch '$_t' && rm -f '$_t'" 2>/dev/null; then
+                _doc_pass "5/8" "数据目录可写 (经 root): $_ddir"
+            else
+                _doc_fail "5/8" "数据目录不可写: $_ddir (写需 root, 请先 'sudo -v' 缓存凭据或以 root 运行 doctor)"
+            fi
+        elif [ "$(id -u 2>/dev/null || echo 1)" = "0" ]; then
+            # 当前已是 root 但仍写不进, 是真不可写
+            _doc_fail "5/8" "数据目录不可写: $_ddir"
+        else
+            _doc_fail "5/8" "数据目录不可写: $_ddir (写需 root, 未检测到 sudo)"
+        fi
+    fi
+}
+
+doctor_check_6() {
+    # DNS 探测必须显式限时 (默认 glibc resolver attempts=2 × timeout=5s 可累计 30s+),
+    # 否则坏 resolver 会让 doctor 卡 20-40 秒。统一 3s 超时。
+    _host="cloudflare.com"
+    _has_timeout=0
+    command -v timeout >/dev/null 2>&1 && _has_timeout=1
+
+    _try_getent() {
+        if [ "$_has_timeout" = "1" ]; then
+            timeout 5 getent hosts "$_host" >/dev/null 2>&1
+        else
+            getent hosts "$_host" >/dev/null 2>&1
+        fi
+    }
+    if command -v getent >/dev/null 2>&1 && _try_getent; then
+        _doc_pass "6/8" "DNS 解析 $_host 正常 (getent, timeout=5s)"
+    elif command -v nslookup >/dev/null 2>&1 && nslookup -timeout=3 -retry=1 "$_host" >/dev/null 2>&1; then
+        _doc_pass "6/8" "DNS 解析 $_host 正常 (nslookup, timeout=3s)"
+    elif command -v host >/dev/null 2>&1 && host -W 3 -t A "$_host" >/dev/null 2>&1; then
+        _doc_pass "6/8" "DNS 解析 $_host 正常 (host, timeout=3s)"
+    elif command -v curl >/dev/null 2>&1 && curl -s -o /dev/null --max-time 3 "https://${_host}" >/dev/null 2>&1; then
+        # 兜底: curl --max-time 3 做 DNS+TCP 联合探测
+        _doc_pass "6/8" "DNS 解析 $_host 正常 (curl, timeout=3s)"
+    else
+        _doc_fail "6/8" "无法解析 $_host (getent/nslookup/host/curl 都失败, 超时<=5s)"
+    fi
+}
+
+doctor_check_7() {
+    _code="$(_doc_http_code "https://api.cloudflare.com/client/v4/")"
+    case "$_code" in
+        2*|3*|4*) _doc_pass "7/8" "Cloudflare API 连通 (code=$_code)" ;;
+        000)      _doc_fail "7/8" "Cloudflare API 不可达 (网络/DNS 故障)" ;;
+        *)        _doc_warn "7/8" "Cloudflare API 响应异常 (code=$_code)" ;;
+    esac
+}
+
+doctor_check_8() {
+    _bases="https://gh-raw.966788.xyz https://gh-raw.988669.xyz https://gh-raw.s03.qzz.io https://gh-raw.s04.qzz.io https://gh-raw.s05.qzz.io https://gh-raw.s06.qzz.io https://gh-raw.s07.qzz.io"
+    _ok_host=""
+    for _b in $_bases; do
+        _code="$(_doc_http_code "${_b}/cloudflared-releases/latest")"
+        case "$_code" in
+            2*|3*) _ok_host="$_b"; break ;;
+        esac
+    done
+    if [ -n "$_ok_host" ]; then
+        _doc_pass "8/8" "Release 代理可达 (${_ok_host})"
+    else
+        _doc_fail "8/8" "7 个 gh-raw 代理域名全部不可达"
+    fi
+}
+
+cmd_doctor() {
+    DOC_OK=0; DOC_WARN=0; DOC_FAIL=0
+    printf "%b\n" "${C_BOLD}cfm doctor — 8 项健康自检${C_RST}"
+    printf "%b\n" "────────────────────────────────────────────"
+    doctor_check_1
+    doctor_check_2
+    doctor_check_3
+    doctor_check_4
+    doctor_check_5
+    doctor_check_6
+    doctor_check_7
+    doctor_check_8
+    printf "%b\n" "────────────────────────────────────────────"
+    printf "汇总: ${C_GRN}%d OK${C_RST} / ${C_YLW}%d WARN${C_RST} / ${C_RED}%d FAIL${C_RST}\n" \
+        "$DOC_OK" "$DOC_WARN" "$DOC_FAIL"
+    [ "$DOC_FAIL" -eq 0 ]
+}
+
+# ----------------------------------------------------------------------------
+# cfm backup — 打包配置与数据
+#
+# 设计要点 (审查结论):
+#   - SQLite 热备份: 默认拒绝在 daemon 运行时备份 metrics.db;
+#     强制 (--hot/--allow-running) 时优先用 `sqlite3 .backup` 一致快照, 否则 fail-safe 拷
+#     metrics.db + metrics.db-wal + metrics.db-shm 三件套 (单文件拷会丢最新写入并可能损坏).
+#   - CFDM_BINARIES_DIR 可独立配置, 若位于 DATA_DIR 之外, 单独打进 stage/binaries-external/.
+#   - backup-info.json 字段升级到 schema_version=2, 含 RFC3339+TZ created_at /
+#     os / arch / data_dir / binaries_dir / metrics_db_size / backup_method / daemon_was_running.
+#   - 默认输出路径不再用 pwd (cron/systemd 落点不可控且可能写进 DATA_DIR),
+#     落到 $SUDO_USER 或 $HOME, 且显式拒绝目标位于 DATA_DIR 之下.
+#   - tar 加 --numeric-owner, 跨机 restore 不再撞用户名映射.
+#   - 大库提示: 启动前 du -sh, 大于阈值 (默认 200MB) 提示用户加 --skip-metrics 或裁剪.
+#   - --include-logs 改名为 --include-cloudflared-logs (旧名保留兼容), 并按 init 抓 system logs.
+# ----------------------------------------------------------------------------
+cmd_backup() {
+    _dest=""
+    _include_logs=0
+    _allow_running=0
+    _skip_metrics=0
+    _metrics_size_warn_mb=200
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --include-logs|--include-cloudflared-logs)
+                _include_logs=1; shift ;;
+            --hot|--allow-running)
+                _allow_running=1; shift ;;
+            --skip-metrics)
+                _skip_metrics=1; shift ;;
+            -*) die "未知 backup 参数: $1" ;;
+            *)  [ -z "$_dest" ] && _dest="$1"; shift ;;
+        esac
+    done
+    _ts="$(date +%Y%m%d-%H%M%S)"
+    _created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y%m%d-%H%M%S)"
+
+    _ddir="$(env_get CFDM_DATA_DIR)"; [ -n "$_ddir" ] || _ddir="$DATA_DIR"
+    [ -d "$_ddir" ] || die "数据目录不存在: $_ddir"
+    _bindir_env="$(env_get CFDM_BINARIES_DIR)"
+    _bindir_external=0
+    if [ -n "$_bindir_env" ]; then
+        case "$_bindir_env" in
+            "${_ddir}"|"${_ddir}/"*) _bindir_external=0 ;;
+            *) _bindir_external=1 ;;
+        esac
+    fi
+
+    # 默认落点选择: 优先 $SUDO_USER 的家目录, 再 $HOME, 最后 pwd. 不允许落在 DATA_DIR 下.
+    if [ -z "$_dest" ]; then
+        _default_dir=""
+        if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+            _su_home=""
+            if command -v getent >/dev/null 2>&1; then
+                _su_home="$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)"
+            fi
+            # macOS / 无 getent: 读 /etc/passwd 兜底
+            if [ -z "$_su_home" ] && [ -r /etc/passwd ]; then
+                _su_home="$(awk -F: -v u="$SUDO_USER" '$1==u{print $6; exit}' /etc/passwd 2>/dev/null)"
+            fi
+            [ -n "$_su_home" ] && [ -d "$_su_home" ] && _default_dir="$_su_home"
+        fi
+        [ -z "$_default_dir" ] && [ -n "${HOME:-}" ] && [ -d "${HOME}" ] && _default_dir="$HOME"
+        [ -z "$_default_dir" ] && _default_dir="$(pwd)"
+        _dest="${_default_dir%/}/cfdmgrd-backup-${_ts}.tar.gz"
+    elif [ -d "$_dest" ]; then
+        _dest="${_dest%/}/cfdmgrd-backup-${_ts}.tar.gz"
+    fi
+    # 输出绝对路径
+    case "$_dest" in
+        /*) _abs="$_dest" ;;
+        *)  _abs="$(pwd)/${_dest#./}" ;;
+    esac
+    # 显式禁止落到 DATA_DIR 下 (避免下次备份把自己 tar 进去, 也避免污染数据目录)
+    case "$_abs" in
+        "${_ddir}"|"${_ddir}/"*)
+            die "拒绝写入: 目标路径位于 DATA_DIR ($_ddir) 之下 -> $_abs (请显式指定外部路径)" ;;
+    esac
+
+    # 是否在跑?
+    _running=0
+    case "$(detect_init)" in
+        systemd) systemctl is-active "$SERVICE_NAME" >/dev/null 2>&1 && _running=1 ;;
+        openrc)  rc-service "$SERVICE_NAME" status >/dev/null 2>&1 && _running=1 ;;
+        launchd) launchctl list 2>/dev/null | grep -q "$SERVICE_NAME" && _running=1 ;;
+    esac
+    if [ "$_running" = "1" ] && [ "$_allow_running" != "1" ] && [ "$_skip_metrics" != "1" ]; then
+        die "daemon 正在运行, 热备份会导致 SQLite WAL 不一致。请先 'cfm stop' 再备份, 或加 --hot (一致性快照, 需 sqlite3) / --skip-metrics (跳过 metrics.db)。"
+    fi
+
+    # 大库提示
+    if [ -f "${_ddir}/metrics.db" ] && command -v du >/dev/null 2>&1; then
+        _mb="$(du -m "${_ddir}/metrics.db" 2>/dev/null | awk '{print $1}')"
+        if [ -n "$_mb" ] && [ "$_mb" -gt "$_metrics_size_warn_mb" ] 2>/dev/null; then
+            warn "metrics.db 大小 ${_mb}MB (>${_metrics_size_warn_mb}MB), 打包可能耗时。可加 --skip-metrics 跳过。"
+        fi
+    fi
+
+    _ver="$("${INSTALL_DIR}/${BIN_NAME}" version 2>/dev/null | awk '{print $2}')"
+    [ -n "$_ver" ] || _ver="unknown"
+    _host="$(hostname 2>/dev/null || echo unknown)"
+    _os_uname="$(uname -s 2>/dev/null || echo unknown)"
+    _arch_uname="$(uname -m 2>/dev/null || echo unknown)"
+
+    _stage="$(mktemp -d 2>/dev/null || mktemp -d -t cfm-backup)"
+    trap 'rm -rf "$_stage" 2>/dev/null || true' EXIT INT TERM
+
+    # 拷贝核心数据 (profiles / meta.json / bin)
+    info "归集数据目录: $_ddir"
+    for _item in profiles meta.json bin; do
+        if [ -e "${_ddir}/${_item}" ]; then
+            priv cp -a "${_ddir}/${_item}" "${_stage}/" 2>/dev/null \
+                || cp -a "${_ddir}/${_item}" "${_stage}/" 2>/dev/null || true
+        fi
+    done
+
+    # metrics.db: 一致性优先
+    _backup_method="none"
+    _metrics_size=0
+    if [ "$_skip_metrics" = "1" ]; then
+        info "跳过 metrics.db (--skip-metrics)"
+        _backup_method="skipped"
+    elif [ -f "${_ddir}/metrics.db" ]; then
+        if [ "$_running" = "1" ] && command -v sqlite3 >/dev/null 2>&1; then
+            info "热备份 metrics.db (sqlite3 .backup 一致性快照)"
+            if priv sqlite3 "${_ddir}/metrics.db" ".backup '${_stage}/metrics.db'" 2>/dev/null \
+               || sqlite3 "${_ddir}/metrics.db" ".backup '${_stage}/metrics.db'" 2>/dev/null; then
+                _backup_method="sqlite-backup"
+            else
+                warn "sqlite3 .backup 失败, 回退到带 WAL+SHM 文件级拷贝"
+                _backup_method="cp-with-wal"
+                for _ext in "" "-wal" "-shm"; do
+                    [ -f "${_ddir}/metrics.db${_ext}" ] || continue
+                    priv cp -a "${_ddir}/metrics.db${_ext}" "${_stage}/" 2>/dev/null \
+                        || cp -a "${_ddir}/metrics.db${_ext}" "${_stage}/" 2>/dev/null || true
+                done
+            fi
+        else
+            # 未在跑 (冷备份) 或没有 sqlite3 又用了 --hot: 文件级拷贝, 但务必带 WAL/SHM
+            if [ "$_running" = "1" ]; then
+                warn "未找到 sqlite3 命令, 回退到带 WAL+SHM 文件级拷贝 (一致性减弱)"
+            fi
+            _backup_method="cp-with-wal"
+            for _ext in "" "-wal" "-shm"; do
+                [ -f "${_ddir}/metrics.db${_ext}" ] || continue
+                priv cp -a "${_ddir}/metrics.db${_ext}" "${_stage}/" 2>/dev/null \
+                    || cp -a "${_ddir}/metrics.db${_ext}" "${_stage}/" 2>/dev/null || true
+            done
+        fi
+        if [ -f "${_stage}/metrics.db" ] && command -v stat >/dev/null 2>&1; then
+            _metrics_size="$(stat -c %s "${_stage}/metrics.db" 2>/dev/null || stat -f %z "${_stage}/metrics.db" 2>/dev/null || echo 0)"
+        fi
+    fi
+
+    # CFDM_BINARIES_DIR 在 DATA_DIR 外: 独立目录打包
+    if [ "$_bindir_external" = "1" ] && [ -d "$_bindir_env" ]; then
+        info "外部 cloudflared 二进制目录: $_bindir_env (单独打包)"
+        priv mkdir -p "${_stage}/binaries-external" 2>/dev/null || mkdir -p "${_stage}/binaries-external"
+        priv cp -a "$_bindir_env"/. "${_stage}/binaries-external/" 2>/dev/null \
+            || cp -a "$_bindir_env"/. "${_stage}/binaries-external/" 2>/dev/null || warn "外部二进制目录拷贝失败"
+    fi
+
+    # 日志: --include-cloudflared-logs (旧名 --include-logs 兼容)
+    if [ "$_include_logs" = "1" ]; then
+        # 1) DATA_DIR/logs (cloudflared 子进程日志)
+        if [ -d "${_ddir}/logs" ]; then
+            info "并入 cloudflared 子进程日志 (${_ddir}/logs)"
+            priv cp -a "${_ddir}/logs" "${_stage}/" 2>/dev/null \
+                || cp -a "${_ddir}/logs" "${_stage}/" 2>/dev/null || true
+        fi
+        # 2) systemd journald / launchd / openrc 系统日志 (按 init 抓)
+        priv mkdir -p "${_stage}/system-logs" 2>/dev/null || mkdir -p "${_stage}/system-logs"
+        case "$(detect_init)" in
+            systemd)
+                info "导出 journalctl -u $SERVICE_NAME"
+                priv sh -c "journalctl -u '$SERVICE_NAME' --no-pager > '${_stage}/system-logs/journalctl.log' 2>/dev/null" \
+                    || journalctl -u "$SERVICE_NAME" --no-pager > "${_stage}/system-logs/journalctl.log" 2>/dev/null || true
+                ;;
+            launchd)
+                info "拷贝 /Library/Logs/${SERVICE_NAME}*"
+                for _f in /Library/Logs/${SERVICE_NAME}*; do
+                    [ -e "$_f" ] || continue
+                    priv cp -a "$_f" "${_stage}/system-logs/" 2>/dev/null \
+                        || cp -a "$_f" "${_stage}/system-logs/" 2>/dev/null || true
+                done
+                ;;
+            openrc|*)
+                for _f in /var/log/${SERVICE_NAME}*; do
+                    [ -e "$_f" ] || continue
+                    info "拷贝 $_f"
+                    priv cp -a "$_f" "${_stage}/system-logs/" 2>/dev/null \
+                        || cp -a "$_f" "${_stage}/system-logs/" 2>/dev/null || true
+                done
+                ;;
+        esac
+        # 若 system-logs 是空目录, 删掉避免混淆
+        rmdir "${_stage}/system-logs" 2>/dev/null || true
+    fi
+
+    # backup-info.json (schema_version=2, 字段齐全)
+    # 注意 JSON 转义: hostname / 路径里若有特殊字符极端情况下可能破坏 JSON, 此处做最小化兜底.
+    _json_escape() {
+        # \ -> \\, " -> \"
+        printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+    }
+    cat > "${_stage}/backup-info.json" <<JEOF
+{
+  "schema_version": 2,
+  "version": 1,
+  "ts": "${_ts}",
+  "created_at": "${_created_at}",
+  "hostname": "$(_json_escape "$_host")",
+  "daemon_version": "$(_json_escape "$_ver")",
+  "os": "$(_json_escape "$_os_uname")",
+  "arch": "$(_json_escape "$_arch_uname")",
+  "data_dir": "$(_json_escape "$_ddir")",
+  "binaries_dir": "$(_json_escape "${_bindir_env:-}")",
+  "binaries_external": ${_bindir_external},
+  "include_logs": ${_include_logs},
+  "skip_metrics": ${_skip_metrics},
+  "metrics_db_size_bytes": ${_metrics_size:-0},
+  "backup_method": "$(_json_escape "$_backup_method")",
+  "daemon_was_running": ${_running}
+}
+JEOF
+
+    info "打包 -> $_dest"
+    # tar 加 --numeric-owner (跨机用户映射), 用 -C 而非 (cd ...; tar ...) 避免子 shell 错误吞 ||.
+    # GNU tar / BSD tar 都支持 --numeric-owner.
+    if tar --numeric-owner -czf "$_abs" -C "$_stage" . 2>/dev/null; then
+        :
+    else
+        # 部分极旧 tar 不识别 --numeric-owner, 兜底
+        warn "tar --numeric-owner 失败, 回退到普通 tar (跨机 uid 可能错位)"
+        tar -czf "$_abs" -C "$_stage" . || die "打包失败"
+    fi
+
+    # 若以 root 跑 (sudo), 把产物 chown 给原用户, 普通用户才能取走
+    if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ] && [ "$(id -u 2>/dev/null || echo 1)" = "0" ]; then
+        chown "${SUDO_USER}":"${SUDO_USER}" "$_abs" 2>/dev/null || true
+    fi
+
+    ok "备份完成: $_dest ($(du -h "$_dest" 2>/dev/null | awk '{print $1}'))"
+    info "backup_method=${_backup_method}, daemon_was_running=${_running}, include_logs=${_include_logs}, skip_metrics=${_skip_metrics}"
+
+    rm -rf "$_stage" 2>/dev/null || true
+    trap - EXIT INT TERM
+}
+
+# ----------------------------------------------------------------------------
+# cfm restore — 从备份恢复
+#
+# 设计要点 (审查结论):
+#   - _has_data 改为"目录非空即有数据"(用 ls -A): 旧实现只检查 profiles/meta.json/metrics.db,
+#     若 DATA_DIR 里残留 bin/ logs/ tmp/ 等子目录就跳过 .bak-<ts> 分支, 与备份内容互相合并
+#     导致旧文件残留污染。新逻辑无条件走 .bak-<ts> 分支。
+#   - tar 加 --no-same-owner --no-same-permissions --no-overwrite-dir; 解包后扫一遍 stage,
+#     若出现符号链接 / 命名管道 / socket 立即 die (root 权限 + 恶意 link -> /etc 风险).
+#   - 应用阶段原子化: 先 cp -a 到 $_ddir.new-<ts>, 全部成功后 mv $_ddir -> $_ddir.bak-<ts>
+#     再 mv .new -> $_ddir; trap 追加 rm -rf .new + 回滚提示, 中途失败不留半新半旧.
+# ----------------------------------------------------------------------------
+cmd_restore() {
+    _src=""
+    _force=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --force) _force=1; shift ;;
+            -*) die "未知 restore 参数: $1" ;;
+            *)  [ -z "$_src" ] && _src="$1"; shift ;;
+        esac
+    done
+    [ -n "$_src" ] || die "用法: cfm restore <备份文件> [--force]"
+    [ -f "$_src" ] || die "备份文件不存在: $_src"
+
+    _ddir="$(env_get CFDM_DATA_DIR)"; [ -n "$_ddir" ] || _ddir="$DATA_DIR"
+    [ -n "$_ddir" ] || die "无法确定 DATA_DIR"
+
+    _stage="$(mktemp -d 2>/dev/null || mktemp -d -t cfm-restore)"
+    # 用 -<ts> 后缀做 staging 目标, 避免与未来备份/其他 restore 冲突
+    _ts_new="$(date +%s)"
+    _new_dir="${_ddir}.new-${_ts_new}"
+
+    # trap: 清理 stage + new_dir, 并提示用户回滚
+    _restore_trap() {
+        rm -rf "$_stage" 2>/dev/null || true
+        if [ -d "$_new_dir" ]; then
+            priv rm -rf "$_new_dir" 2>/dev/null || rm -rf "$_new_dir" 2>/dev/null || true
+        fi
+        # 若已经 mv 了 _ddir -> _bk 但未完成最终 mv, 提示用户手动回滚
+        if [ -n "${_bk:-}" ] && [ -d "$_bk" ] && [ ! -d "$_ddir" ]; then
+            err "restore 中断: 原数据保留在 $_bk; 可手动 'mv $_bk $_ddir' 回滚"
+        fi
+    }
+    trap '_restore_trap' EXIT INT TERM
+
+    info "解包到临时目录: $_stage"
+    # tar 加固: 不复用归档里的 owner/perm, 不覆盖目录元数据
+    if ! tar --no-same-owner --no-same-permissions --no-overwrite-dir -xzf "$_src" -C "$_stage" 2>/dev/null; then
+        # 旧 tar 不识别这些选项时回退 (退而求其次)
+        warn "tar 加固选项失败, 回退到普通解包"
+        tar -xzf "$_src" -C "$_stage" || die "解包失败"
+    fi
+    [ -f "${_stage}/backup-info.json" ] || die "缺少 backup-info.json, 不是合法备份"
+
+    # 安全扫描: 拒绝包含符号链接/管道/socket 的备份 (root 权限下风险极高)
+    if command -v find >/dev/null 2>&1; then
+        _bad="$(find "$_stage" \( -type l -o -type p -o -type s \) -print 2>/dev/null | head -n5)"
+        if [ -n "$_bad" ]; then
+            err "备份内含不安全文件类型 (符号链接/命名管道/socket), 拒绝恢复:"
+            printf '%s\n' "$_bad" >&2
+            die "可能是恶意备份或损坏归档, 中止"
+        fi
+    fi
+
+    # 校验 daemon_version <= 当前版本 (字符串等值或当前版本未知都放行)
+    _cur="$("${INSTALL_DIR}/${BIN_NAME}" version 2>/dev/null | awk '{print $2}')"
+    _bak="$(grep '"daemon_version"' "${_stage}/backup-info.json" | head -n1 \
+        | sed -E 's/.*"daemon_version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
+    info "备份 daemon_version=${_bak:-unknown}; 当前=${_cur:-unknown}"
+    # 简单字符串排序: 若备份版本 > 当前版本, 警告但放行 (--force)
+    if [ -n "$_bak" ] && [ -n "$_cur" ] && [ "$_bak" != "$_cur" ]; then
+        case "$(printf "%s\n%s\n" "$_bak" "$_cur" | sort -V | tail -n1)" in
+            "$_bak")
+                if [ "$_force" != "1" ]; then
+                    die "备份版本 ($_bak) 高于当前 ($_cur), 请先升级 daemon 或加 --force"
+                fi
+                warn "备份版本 ($_bak) 高于当前 ($_cur), 强制继续"
+                ;;
+        esac
+    fi
+
+    # 提取备份中记录的 data_dir / binaries_dir / binaries_external (跨机迁移提示)
+    _bak_ddir="$(grep '"data_dir"' "${_stage}/backup-info.json" 2>/dev/null | head -n1 \
+        | sed -E 's/.*"data_dir"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
+    _bak_bindir="$(grep '"binaries_dir"' "${_stage}/backup-info.json" 2>/dev/null | head -n1 \
+        | sed -E 's/.*"binaries_dir"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
+    _bak_bin_ext="$(grep '"binaries_external"' "${_stage}/backup-info.json" 2>/dev/null | head -n1 \
+        | sed -E 's/.*"binaries_external"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/')"
+    if [ -n "$_bak_ddir" ] && [ "$_bak_ddir" != "$_ddir" ]; then
+        warn "备份 data_dir=$_bak_ddir, 本机=$_ddir (路径不同, 仍按本机为准恢复)"
+    fi
+
+    # 检测已有数据 (目录非空即视为有数据)
+    _has_data=0
+    if [ -d "$_ddir" ]; then
+        # ls -A 列出除了 . / .. 之外的所有项; 任一存在即非空
+        if [ -n "$(ls -A "$_ddir" 2>/dev/null)" ]; then
+            _has_data=1
+        fi
+    fi
+    if [ "$_has_data" = "1" ] && [ "$_force" != "1" ]; then
+        die "DATA_DIR ($_ddir) 非空, 拒绝覆盖。加 --force 强制覆盖 (会先备份到 .bak-<ts>)。"
+    fi
+
+    info "先停止 daemon"
+    cmd_stop || warn "停止失败 (可能未在跑), 继续"
+
+    # ===== 阶段 1: 先把所有内容 cp -a 到 _new_dir =====
+    info "构建新数据目录: $_new_dir"
+    priv mkdir -p "$_new_dir" || die "无法创建 $_new_dir"
+    for _it in "$_stage"/*; do
+        [ -e "$_it" ] || continue
+        _name="${_it##*/}"
+        case "$_name" in
+            backup-info.json) continue ;;
+            # binaries-external / system-logs 不进 DATA_DIR
+            binaries-external|system-logs) continue ;;
+        esac
+        priv cp -a "$_it" "${_new_dir}/" || die "复制 $_name 到 staging 失败"
+    done
+
+    # ===== 阶段 2: 原子化切换 =====
+    _bk=""
+    if [ "$_has_data" = "1" ]; then
+        _bk="${_ddir}.bak-${_ts_new}"
+        warn "--force: 现有数据将移至 $_bk (mv 原子操作)"
+        priv mv "$_ddir" "$_bk" || die "无法移动现有数据到 $_bk"
+    elif [ -d "$_ddir" ]; then
+        # 目录存在但空, 直接 rmdir 让出位置
+        priv rmdir "$_ddir" 2>/dev/null || true
+    fi
+    if ! priv mv "$_new_dir" "$_ddir"; then
+        # 切换失败, 尽力回滚
+        err "无法切换 $_new_dir -> $_ddir, 尝试回滚"
+        if [ -n "$_bk" ] && [ -d "$_bk" ]; then
+            priv mv "$_bk" "$_ddir" 2>/dev/null \
+                && warn "已回滚 $_bk -> $_ddir" \
+                || err "回滚失败, 请手动恢复: mv $_bk $_ddir"
+        fi
+        die "切换失败"
+    fi
+
+    # 处理外部二进制目录 (CFDM_BINARIES_DIR 在 DATA_DIR 外)
+    if [ "${_bak_bin_ext:-0}" = "1" ] && [ -d "${_stage}/binaries-external" ] && [ -n "$_bak_bindir" ]; then
+        warn "备份含外部 cloudflared 二进制目录 (原路径: $_bak_bindir)"
+        # 仅提示, 不自动写非 DATA_DIR 路径 (避免覆盖运维有意指向的共享目录)
+        info "如需恢复, 手动执行: cp -a ${_stage}/binaries-external/. <CFDM_BINARIES_DIR>/"
+        info "  (或先确认 CFDM_BINARIES_DIR 环境变量再决定; staging 即将清理, 请尽快处理)"
+    fi
+
+    info "启动 daemon"
+    cmd_start
+
+    ok "恢复完成 (旧数据: ${_bk:-无})"
+    rm -rf "$_stage" 2>/dev/null || true
+    trap - EXIT INT TERM
+}
+
+# ----------------------------------------------------------------------------
+# cfm watch — 终端实时面板 (POSIX sh / tput / 纯 awk)
+# ----------------------------------------------------------------------------
+cmd_watch() {
+    _interval=2
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --interval=*) _interval="${1#--interval=}"; shift ;;
+            --interval)   [ $# -ge 2 ] || die "--interval 缺少参数"; _interval="$2"; shift 2 ;;
+            *) die "未知 watch 参数: $1" ;;
+        esac
+    done
+    case "$_interval" in
+        ''|*[!0-9]*) die "--interval 必须为正整数: $_interval" ;;
+    esac
+    [ "$_interval" -ge 1 ] || _interval=1
+
+    _addr="$(env_get CFDM_HTTP_ADDR)"; _port="${_addr#:}"; [ -n "$_port" ] || _port="8080"
+    _tok="$(env_get CFDM_API_TOKEN)"
+    [ -n "$_tok" ] || die "未读取到 API token, 无法拉取数据 (检查 $ENV_FILE)"
+
+    _base="http://127.0.0.1:${_port}/api/v1"
+
+    # 终端清屏 (有 tput 用 tput, 否则回退转义)
+    _clear() {
+        if command -v tput >/dev/null 2>&1; then tput clear 2>/dev/null || printf '\033[2J\033[H'
+        else printf '\033[2J\033[H'; fi
+    }
+
+    # 拉取一个 JSON 字段值 (top-level scalar). 用法: _jget <json_string> <key>
+    _jget() {
+        printf "%s" "$1" | awk -v k="$2" '
+            BEGIN{ FS="" }
+            {
+                # 极简提取: "key":<数字或字符串>
+                pat_str = "\"" k "\"[ \t]*:[ \t]*\"[^\"]*\""
+                pat_num = "\"" k "\"[ \t]*:[ \t]*[-0-9.]+"
+                line = $0
+                if (match(line, pat_str)) {
+                    s = substr(line, RSTART, RLENGTH)
+                    sub(/^"[^"]*"[ \t]*:[ \t]*"/, "", s)
+                    sub(/"$/, "", s)
+                    print s
+                    exit
+                }
+                if (match(line, pat_num)) {
+                    s = substr(line, RSTART, RLENGTH)
+                    sub(/^"[^"]*"[ \t]*:[ \t]*/, "", s)
+                    print s
+                    exit
+                }
+            }
+        '
+    }
+
+    # 信号清理 — 退出时恢复光标
+    _restore() {
+        if command -v tput >/dev/null 2>&1; then tput cnorm 2>/dev/null || true; fi
+        printf "\n"
+    }
+    trap '_restore; exit 0' INT TERM
+    if command -v tput >/dev/null 2>&1; then tput civis 2>/dev/null || true; fi
+
+    while :; do
+        _clear
+        _now="$(date '+%Y-%m-%d %H:%M:%S')"
+        # 顶部总览
+        _sys="$(curl -fsS --max-time 3 -H "Authorization: Bearer $_tok" "${_base}/system/info" 2>/dev/null || echo "")"
+        _ver_json="$(curl -fsS --max-time 3 -H "Authorization: Bearer $_tok" "${_base}/version" 2>/dev/null || echo "")"
+        _v="$(_jget "$_ver_json" version)"; [ -n "$_v" ] || _v="?"
+        _cpu="$(_jget "$_sys" cpu_percent)"
+        _mem="$(_jget "$_sys" memory_percent)"
+        _up="$(_jget "$_sys" uptime_s)"
+        printf "%b cfdmgrd watch — %s  v%s\n" "${C_BOLD}" "$_now" "$_v"
+        printf "%b\n" "${C_RST}────────────────────────────────────────────"
+        printf "  端口: %s   CPU: %s%%   内存: %s%%   运行: %ss\n" \
+            "$_port" "${_cpu:-?}" "${_mem:-?}" "${_up:-?}"
+        printf "%b\n" "────────────────────────────────────────────"
+        printf "  %b\n" "${C_BOLD}实例列表${C_RST}"
+        # 实例表: 仅展示 id / name / state (避免依赖 jq)
+        _cfgs="$(curl -fsS --max-time 3 -H "Authorization: Bearer $_tok" "${_base}/configs" 2>/dev/null || echo "[]")"
+        printf "  %-32s  %-20s  %s\n" "ID" "名称" "状态"
+        printf "%s" "$_cfgs" | awk '
+            BEGIN { RS="{"; FS="\n" }
+            NR>1 {
+                id=""; name=""; state=""
+                if (match($0, /"id"[ \t]*:[ \t]*"[^"]*"/)) {
+                    s=substr($0,RSTART,RLENGTH); sub(/^"id"[ \t]*:[ \t]*"/,"",s); sub(/"$/,"",s); id=s
+                }
+                if (match($0, /"name"[ \t]*:[ \t]*"[^"]*"/)) {
+                    s=substr($0,RSTART,RLENGTH); sub(/^"name"[ \t]*:[ \t]*"/,"",s); sub(/"$/,"",s); name=s
+                }
+                if (match($0, /"state"[ \t]*:[ \t]*"[^"]*"/)) {
+                    s=substr($0,RSTART,RLENGTH); sub(/^"state"[ \t]*:[ \t]*"/,"",s); sub(/"$/,"",s); state=s
+                }
+                if (id != "") printf "  %-32s  %-20s  %s\n", id, name, state
+            }
+        '
+        printf "%b\n" "────────────────────────────────────────────"
+        printf "%b\n" "${C_BLU}刷新 ${_interval}s · 按 q 退出 · Ctrl+C 中断${C_RST}"
+
+        # 等待 _interval 秒 — 若有键盘输入 q 则提前退出
+        # 用 read -t 兼容大多数 sh; 不支持 -t 时回退 sleep
+        if (read -t "$_interval" -r _key 2>/dev/null); then
+            case "$_key" in q|Q) _restore; return 0 ;; esac
+        else
+            sleep "$_interval"
+        fi
+    done
 }
 
 usage() {
@@ -963,25 +1759,37 @@ usage() {
 用法: cfm <命令> [参数]
 
 服务管理:
-  start            启动服务
-  stop             停止服务
-  restart          重启服务
-  status           查看运行状态
-  logs [-f]        查看日志 (加 -f 实时跟踪)
-  enable           设置开机自启
-  disable          取消开机自启
+  start                    启动服务
+  stop                     停止服务
+  restart                  重启服务
+  status                   查看运行状态
+  logs [-f]                查看日志 (加 -f 实时跟踪)
+  enable                   设置开机自启
+  disable                  取消开机自启
 
 信息查看:
-  info             显示完整运行信息 (地址/令牌/路径/状态) + 命令面板
-  config [edit]    查看 (或 edit 编辑) 配置文件
-  version          显示版本信息
+  info                     显示完整运行信息 (地址/令牌/路径/状态) + 命令面板
+  config [edit]            查看 (或 edit 编辑) 配置文件
+  version                  显示版本信息
 
 安装维护:
-  install [参数]   重新安装 (参数透传给 install.sh)
-  update [参数]    更新到最新版 (保留端口/令牌/数据)
-  uninstall        卸载
+  install [--version=X]    重新安装 (参数透传给 install.sh)
+  update  [--version=X]    更新到最新版 (保留端口/令牌/数据)
+  uninstall [--purge]      卸载 (默认保留数据; --purge 同时删除 DATA_DIR)
 
-  help             显示本帮助"
+进阶:
+  doctor                   8 项健康自检 (进程/端口/Token/二进制/数据目录/DNS/CF/代理)
+  backup [<路径>] [--hot] [--skip-metrics] [--include-cloudflared-logs]
+                           打包配置/数据为 tar.gz (默认落 \$HOME, 拒绝写入 DATA_DIR 子路径).
+                           daemon 在跑时默认拒绝, 加 --hot 用 sqlite3 一致性快照 (无 sqlite3 则
+                           连带 WAL/SHM 文件级拷贝). --skip-metrics 跳过 metrics.db.
+                           --include-cloudflared-logs (兼容旧名 --include-logs) 一并打包子进程
+                           日志 + journalctl/launchd/openrc 系统日志.
+  restore <路径> [--force] 从备份恢复 (先停服; tar 加固; 阶段化原子切换; --force 覆盖已有数据,
+                           原目录 mv 到 .bak-<ts> 保留)
+  watch [--interval=N]     终端实时面板 (默认每 2s 刷新, q 退出)
+
+  help                     显示本帮助"
 }
 
 # 子命令收尾的一行轻提示, 引导查看完整命令清单
@@ -1005,6 +1813,10 @@ case "${1:-help}" in
     update)     shift; cmd_update "$@" ;;
     install)    shift; cmd_install "$@" ;;
     uninstall)  shift; cmd_uninstall "$@"; exit 0 ;;
+    doctor)     shift; cmd_doctor "$@"; exit 0 ;;
+    backup)     shift; cmd_backup "$@"; exit 0 ;;
+    restore)    shift; cmd_restore "$@"; exit 0 ;;
+    watch)      shift; cmd_watch "$@"; exit 0 ;;
     help|-h|--help) usage; exit 0 ;;
     *)          err "未知命令: ${1}"; echo; usage; exit 2 ;;
 esac

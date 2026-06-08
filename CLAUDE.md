@@ -121,7 +121,34 @@ API 烟测：`BASE=http://127.0.0.1:8080 TOKEN=dev bash scripts/api-smoke.sh`（
 - 版本号在**构建期由 `-ldflags` 注入** [pkg/version](pkg/version)，不要在源码里硬编码。
 - cloudflared 二进制**不内嵌**：由 `internal/cfdbin` 下载/校验/多版本管理，UI「二进制管理」页可检查/下载/切换；实例可经 `binaryVersion` 字段钉某个版本。
 - 发布走 CI（`.github/workflows/release.yml`），release 提交形如 `chore(release): vX.Y.Z [skip ci]`。
-- 运维统一用安装脚本生成的 **`cfm` 命令**：服务管理 `start/stop/restart/status/logs [-f]/enable/disable`、信息查看 `info/config [edit]/version`、安装维护 `install/update/uninstall`、`help`。自动适配 systemd/OpenRC/launchd/Windows 服务；`cfm info` 查看地址与 API 令牌（忘令牌时用）。改动 `install.sh`/`install.ps1` 只对新装或下次 `cfm update` 生效。
+- 运维统一用安装脚本生成的 **`cfm` 命令**（共 18 个子命令），自动适配 systemd/OpenRC/launchd/Windows 服务。改动 `install.sh`/`install.ps1` 只对新装或下次 `cfm update` 生效。
+
+  **服务管理（7 个）**：
+  - `cfm start` — 启动 cfdmgrd 守护进程。
+  - `cfm stop` — 停止 cfdmgrd 守护进程。
+  - `cfm restart` — 重启守护进程（stop + start）。
+  - `cfm status` — 查看服务运行状态（PID/活跃/退出码）。
+  - `cfm logs [-f]` — 查看守护进程日志，`-f` 实时跟随输出。
+  - `cfm enable` — 设置开机自启。
+  - `cfm disable` — 取消开机自启。
+
+  **信息查看（3 个）**：
+  - `cfm info` — 显示监听地址、数据目录与 API 令牌（忘令牌时用）。
+  - `cfm version` — 显示守护进程版本号与构建信息。
+  - `cfm config [edit]` — 查看 `/etc/cfdmgrd/cfdmgrd.env`，加 `edit` 用默认编辑器打开。
+
+  **安装维护（3 个）**：
+  - `cfm install [--version=X]` — 安装/重装 cfdmgrd，`--version` 可指定版本（省略=latest）。
+  - `cfm update [--version=X]` — 升级到指定版本（省略=latest），保留配置与数据。
+  - `cfm uninstall [--purge]` — 卸载守护进程，`--purge` 同时删除数据目录。
+
+  **进阶辅助（4 个，本次新增）**：
+  - `cfm doctor` — 8 项健康自检：进程存活 / HTTP 端口 / API token / cloudflared 二进制 / 数据目录可写 / DNS 解析 / Cloudflare API 连通性 / Release 代理可达，输出 `X OK / Y WARN / Z FAIL` 汇总。
+  - `cfm backup [<path>] [--include-logs]` — 打包 `meta.json` / `profiles/` / `metrics.db` / `bin/manifest` 为 `cfdmgrd-backup-YYYYMMDD-HHMMSS.tar.gz`，附 `backup-info.json` 元数据；`--include-logs` 才打 `logs/`。
+  - `cfm restore <path> [--force]` — 解包并校验后停服恢复；`DATA_DIR` 已有数据需 `--force` 才清空覆盖。
+  - `cfm watch [--interval=N]` — 终端实时面板（btop 风格，纯 bash + tput），`--interval` 设刷新秒数。
+
+  - `cfm help` — 列出全部子命令与简要说明。
 
 ## 9. 提交规范
 

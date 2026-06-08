@@ -728,6 +728,431 @@ function Invoke-Installer([object[]]$extra) {
     try { & powershell -NoProfile -ExecutionPolicy Bypass -File $tmp @extra }
     finally { Remove-Item -Force $tmp -ErrorAction SilentlyContinue }
 }
+
+# ----------------------------------------------------------------------------
+# 读取已注册服务的环境变量 (key -> value)。失败返回空哈希表
+# ----------------------------------------------------------------------------
+function Get-ServiceEnv {
+    $h = @{}
+    if (-not (Use-Nssm)) { return $h }
+    $raw = & $NssmPath get $ServiceName AppEnvironmentExtra 2>$null
+    foreach ($line in $raw) {
+        if ($line -match '^([A-Z_][A-Z0-9_]*)=(.*)$') { $h[$Matches[1]] = $Matches[2] }
+    }
+    return $h
+}
+
+# ----------------------------------------------------------------------------
+# cfm doctor — 8 项健康自检
+# ----------------------------------------------------------------------------
+function Write-Check {
+    param([int]$Index, [string]$Title, [string]$Level, [string]$Detail)
+    switch ($Level) {
+        'OK'   { $tag = '[OK]  '; $color = 'Green'  }
+        'WARN' { $tag = '[WARN]'; $color = 'Yellow' }
+        'FAIL' { $tag = '[FAIL]'; $color = 'Red'    }
+        default { $tag = '[??]  '; $color = 'White' }
+    }
+    Write-Host ("[{0}/8] " -f $Index) -NoNewline
+    Write-Host $tag -ForegroundColor $color -NoNewline
+    Write-Host (" {0} — {1}" -f $Title, $Detail)
+}
+
+function Do-Doctor {
+    Write-Host 'cfdmgrd doctor — 健康自检' -ForegroundColor White
+    Write-Host '────────────────────────────────────────────'
+
+    $envH  = Get-ServiceEnv
+    $port  = if ($envH.ContainsKey('CFDM_HTTP_ADDR')) { $envH['CFDM_HTTP_ADDR'].TrimStart(':') } else { '8080' }
+    $token = if ($envH.ContainsKey('CFDM_API_TOKEN')) { $envH['CFDM_API_TOKEN'] } else { '' }
+    $ddir  = if ($envH.ContainsKey('CFDM_DATA_DIR'))  { $envH['CFDM_DATA_DIR'] }  else { $DataDir }
+    $bdir  = if ($envH.ContainsKey('CFDM_BINARIES_DIR')) { $envH['CFDM_BINARIES_DIR'] } else { Join-Path $ddir 'bin\cloudflared' }
+
+    $okCount = 0; $warnCount = 0; $failCount = 0
+    function _bump([string]$lv) {
+        if ($lv -eq 'OK')   { $script:_dOk++ }
+        elseif ($lv -eq 'WARN') { $script:_dWarn++ }
+        else { $script:_dFail++ }
+    }
+    $script:_dOk = 0; $script:_dWarn = 0; $script:_dFail = 0
+
+    # [1/8] cfdmgrd 进程存活
+    $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -eq 'Running') {
+        Write-Check 1 'cfdmgrd 进程存活' 'OK' "服务状态: $($svc.Status)"
+        $script:_dOk++
+    } elseif ($svc) {
+        Write-Check 1 'cfdmgrd 进程存活' 'FAIL' "服务存在但未运行: $($svc.Status)"
+        $script:_dFail++
+    } else {
+        Write-Check 1 'cfdmgrd 进程存活' 'FAIL' '服务未安装'
+        $script:_dFail++
+    }
+
+    # [2/8] HTTP 监听端口可达
+    try {
+        $r2 = Test-NetConnection -ComputerName '127.0.0.1' -Port ([int]$port) -WarningAction SilentlyContinue -InformationLevel Quiet
+        if ($r2) {
+            Write-Check 2 'HTTP 监听端口可达' 'OK' "127.0.0.1:$port"
+            $script:_dOk++
+        } else {
+            Write-Check 2 'HTTP 监听端口可达' 'FAIL' "127.0.0.1:$port 无法连接"
+            $script:_dFail++
+        }
+    } catch {
+        Write-Check 2 'HTTP 监听端口可达' 'FAIL' "探测异常: $_"
+        $script:_dFail++
+    }
+
+    # [3/8] API token 可用
+    if (-not $token) {
+        Write-Check 3 'API token 可用' 'WARN' '未在服务环境读取到 CFDM_API_TOKEN'
+        $script:_dWarn++
+    } else {
+        try {
+            $hdr = @{ 'Authorization' = "Bearer $token" }
+            $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$port/api/v1/version" -Headers $hdr -UseBasicParsing -TimeoutSec 5
+            if ($resp.StatusCode -eq 200) {
+                Write-Check 3 'API token 可用' 'OK' "/api/v1/version -> 200"
+                $script:_dOk++
+            } else {
+                Write-Check 3 'API token 可用' 'FAIL' "HTTP $($resp.StatusCode)"
+                $script:_dFail++
+            }
+        } catch {
+            $code = ''
+            try { $code = $_.Exception.Response.StatusCode.value__ } catch { }
+            if ($code) {
+                Write-Check 3 'API token 可用' 'FAIL' "HTTP $code (token 错误?)"
+            } else {
+                Write-Check 3 'API token 可用' 'FAIL' "请求失败: $($_.Exception.Message)"
+            }
+            $script:_dFail++
+        }
+    }
+
+    # [4/8] cloudflared 二进制存在
+    if (Test-Path $bdir) {
+        $found = Get-ChildItem -Path $bdir -Filter 'cloudflared*.exe' -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($found) {
+            Write-Check 4 'cloudflared 二进制存在' 'OK' $found.FullName
+            $script:_dOk++
+        } else {
+            Write-Check 4 'cloudflared 二进制存在' 'WARN' "$bdir 下未找到 cloudflared.exe (可在面板下载)"
+            $script:_dWarn++
+        }
+    } else {
+        Write-Check 4 'cloudflared 二进制存在' 'WARN' "目录不存在: $bdir"
+        $script:_dWarn++
+    }
+
+    # [5/8] 数据目录可写
+    try {
+        if (-not (Test-Path $ddir)) { New-Item -ItemType Directory -Force -Path $ddir | Out-Null }
+        $probe = Join-Path $ddir (".cfm-doctor-" + [Guid]::NewGuid().ToString('N'))
+        Set-Content -Path $probe -Value 'probe' -Encoding ASCII -ErrorAction Stop
+        Remove-Item -Force $probe -ErrorAction SilentlyContinue
+        Write-Check 5 '数据目录可写' 'OK' $ddir
+        $script:_dOk++
+    } catch {
+        Write-Check 5 '数据目录可写' 'FAIL' "$ddir 不可写: $($_.Exception.Message)"
+        $script:_dFail++
+    }
+
+    # [6/8] DNS 解析 cloudflare.com
+    try {
+        $dns = Resolve-DnsName -Name 'cloudflare.com' -Type A -ErrorAction Stop -QuickTimeout
+        $first = ($dns | Where-Object { $_.IPAddress } | Select-Object -First 1).IPAddress
+        if ($first) {
+            Write-Check 6 'DNS 解析 cloudflare.com' 'OK' "-> $first"
+            $script:_dOk++
+        } else {
+            Write-Check 6 'DNS 解析 cloudflare.com' 'FAIL' '解析无 A 记录'
+            $script:_dFail++
+        }
+    } catch {
+        Write-Check 6 'DNS 解析 cloudflare.com' 'FAIL' "DNS 解析失败: $($_.Exception.Message)"
+        $script:_dFail++
+    }
+
+    # [7/8] Cloudflare API 连通性
+    try {
+        $cf = Invoke-WebRequest -Uri 'https://api.cloudflare.com/client/v4/' -Method Head -UseBasicParsing -TimeoutSec 5
+        Write-Check 7 'Cloudflare API 连通性' 'OK' "HTTP $($cf.StatusCode)"
+        $script:_dOk++
+    } catch {
+        $code = ''
+        try { $code = $_.Exception.Response.StatusCode.value__ } catch { }
+        if ($code) {
+            # 401/403 也算可达 (有 token 才能成功访问), 这里只看网络层
+            Write-Check 7 'Cloudflare API 连通性' 'OK' "HTTP $code (网络可达)"
+            $script:_dOk++
+        } else {
+            Write-Check 7 'Cloudflare API 连通性' 'FAIL' "无法访问: $($_.Exception.Message)"
+            $script:_dFail++
+        }
+    }
+
+    # [8/8] Release 代理可达 (7 个 gh-raw 域名, 任一 200 即过)
+    $proxies = @(
+        'https://gh-raw.966788.xyz',
+        'https://gh-raw.988669.xyz',
+        'https://gh-raw.s03.qzz.io',
+        'https://gh-raw.s04.qzz.io',
+        'https://gh-raw.s05.qzz.io',
+        'https://gh-raw.s06.qzz.io',
+        'https://gh-raw.s07.qzz.io'
+    )
+    if ($env:CFDM_RELEASE_PROXY_BASES) {
+        $proxies = $env:CFDM_RELEASE_PROXY_BASES -split ',' |
+            ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    }
+    $hit = ''
+    foreach ($p in $proxies) {
+        try {
+            $rp = Invoke-WebRequest -Uri ($p.TrimEnd('/') + '/cloudflared-releases/latest') -UseBasicParsing -TimeoutSec 4
+            if ($rp.StatusCode -eq 200) { $hit = $p; break }
+        } catch { }
+    }
+    if ($hit) {
+        Write-Check 8 'Release 代理可达' 'OK' $hit
+        $script:_dOk++
+    } else {
+        Write-Check 8 'Release 代理可达' 'WARN' '7 个 gh-raw 代理均不可达 (可手动指定 CFDM_RELEASE_PROXY_BASES)'
+        $script:_dWarn++
+    }
+
+    Write-Host '────────────────────────────────────────────'
+    Write-Host ('汇总: {0} OK / {1} WARN / {2} FAIL' -f $script:_dOk, $script:_dWarn, $script:_dFail) -ForegroundColor White
+    if ($script:_dFail -gt 0) { exit 1 }
+}
+
+# ----------------------------------------------------------------------------
+# cfm backup [<path>] [--include-logs] — 打包 zip
+# ----------------------------------------------------------------------------
+function Do-Backup {
+    $target = ''
+    $includeLogs = $false
+    foreach ($a in $Rest) {
+        if ($a -in @('--include-logs', '-include-logs', 'include-logs')) { $includeLogs = $true }
+        elseif ($a -match '^-') { Write-Host "[!] 忽略未知参数: $a" -ForegroundColor Yellow }
+        else { $target = $a }
+    }
+
+    $envH = Get-ServiceEnv
+    $ddir = if ($envH.ContainsKey('CFDM_DATA_DIR')) { $envH['CFDM_DATA_DIR'] } else { $DataDir }
+    if (-not (Test-Path $ddir)) { Write-Host "[x] 数据目录不存在: $ddir" -ForegroundColor Red; exit 1 }
+
+    $stamp  = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $name   = "cfdmgrd-backup-$stamp.zip"
+    if (-not $target) { $target = Join-Path (Get-Location).Path $name }
+    elseif (Test-Path $target -PathType Container) { $target = Join-Path $target $name }
+
+    $stage = Join-Path $env:TEMP ("cfdmgr_bkp_" + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+    try {
+        $daemonVer = ''
+        if (Test-Path $BinPath) {
+            try { $daemonVer = ((& $BinPath version 2>$null) -join ' ').Trim() } catch { }
+        }
+        $info = [ordered]@{
+            version        = 1
+            ts             = (Get-Date).ToString('o')
+            hostname       = $env:COMPUTERNAME
+            daemon_version = $daemonVer
+            include_logs   = $includeLogs
+            platform       = 'windows'
+        }
+        ($info | ConvertTo-Json -Depth 4) | Set-Content -Path (Join-Path $stage 'backup-info.json') -Encoding UTF8
+
+        # 拷贝数据 (排除 logs, 视参数决定是否包含)
+        foreach ($child in Get-ChildItem -Path $ddir -Force -ErrorAction SilentlyContinue) {
+            if (-not $includeLogs -and $child.Name -ieq 'logs') { continue }
+            Copy-Item -Path $child.FullName -Destination (Join-Path $stage $child.Name) -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        if (Test-Path $target) { Remove-Item -Force $target -ErrorAction SilentlyContinue }
+        Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $target -Force
+        Write-Host "[+] 备份完成: $target" -ForegroundColor Green
+        if ($includeLogs) { Write-Host '    (已包含 logs/)' -ForegroundColor Gray }
+    } finally {
+        Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
+    }
+}
+
+# ----------------------------------------------------------------------------
+# cfm restore <path> [--force]
+# ----------------------------------------------------------------------------
+function Do-Restore {
+    Need-Admin
+    $src = ''
+    $force = $false
+    foreach ($a in $Rest) {
+        if ($a -in @('--force', '-force', 'force')) { $force = $true }
+        elseif ($a -match '^-') { Write-Host "[!] 忽略未知参数: $a" -ForegroundColor Yellow }
+        elseif (-not $src) { $src = $a }
+    }
+    if (-not $src) { Write-Host '[x] 用法: cfm restore <备份zip路径> [--force]' -ForegroundColor Red; exit 2 }
+    if (-not (Test-Path $src -PathType Leaf)) { Write-Host "[x] 备份文件不存在: $src" -ForegroundColor Red; exit 1 }
+
+    $stage = Join-Path $env:TEMP ("cfdmgr_rst_" + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+    try {
+        Expand-Archive -Path $src -DestinationPath $stage -Force -ErrorAction Stop
+
+        $infoPath = Join-Path $stage 'backup-info.json'
+        if (-not (Test-Path $infoPath)) {
+            Write-Host '[x] 备份包不合法: 缺少 backup-info.json' -ForegroundColor Red; exit 1
+        }
+        $info = Get-Content -Path $infoPath -Raw | ConvertFrom-Json
+
+        $envH = Get-ServiceEnv
+        $ddir = if ($envH.ContainsKey('CFDM_DATA_DIR')) { $envH['CFDM_DATA_DIR'] } else { $DataDir }
+
+        # 检测 DATA_DIR 已有数据
+        $hasData = $false
+        if (Test-Path $ddir) {
+            $hasData = [bool](Get-ChildItem -Path $ddir -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
+        }
+        if ($hasData -and -not $force) {
+            Write-Host "[x] 数据目录 $ddir 已存在数据, 拒绝覆盖。如确认覆盖请加 --force" -ForegroundColor Red
+            exit 1
+        }
+
+        Write-Host "[*] 备份信息: version=$($info.version) ts=$($info.ts) host=$($info.hostname) daemon=$($info.daemon_version)" -ForegroundColor Blue
+        Write-Host '[*] 停止服务...' -ForegroundColor Blue
+        if (Use-Nssm) { & $NssmPath stop $ServiceName 2>$null | Out-Null }
+        else { & sc.exe stop $ServiceName 2>$null | Out-Null }
+        Start-Sleep -Seconds 1
+
+        if ($force -and $hasData) {
+            Write-Host "[*] 清空旧数据: $ddir" -ForegroundColor Blue
+            Get-ChildItem -Path $ddir -Force -ErrorAction SilentlyContinue |
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        New-Item -ItemType Directory -Force -Path $ddir | Out-Null
+        foreach ($child in Get-ChildItem -Path $stage -Force) {
+            if ($child.Name -eq 'backup-info.json') { continue }
+            Copy-Item -Path $child.FullName -Destination (Join-Path $ddir $child.Name) -Recurse -Force
+        }
+
+        Write-Host '[*] 启动服务...' -ForegroundColor Blue
+        if (Use-Nssm) { & $NssmPath start $ServiceName 2>$null | Out-Null }
+        else { & sc.exe start $ServiceName 2>$null | Out-Null }
+        Write-Host "[+] 恢复完成: $src -> $ddir" -ForegroundColor Green
+    } finally {
+        Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
+    }
+}
+
+# ----------------------------------------------------------------------------
+# cfm watch [--interval=N] — 终端实时面板
+# ----------------------------------------------------------------------------
+function Do-Watch {
+    $interval = 2
+    foreach ($a in $Rest) {
+        if ($a -match '^--interval=(\d+)$') { $interval = [int]$Matches[1] }
+        elseif ($a -match '^-interval=(\d+)$') { $interval = [int]$Matches[1] }
+    }
+    if ($interval -lt 1) { $interval = 1 }
+
+    $envH = Get-ServiceEnv
+    $port  = if ($envH.ContainsKey('CFDM_HTTP_ADDR')) { $envH['CFDM_HTTP_ADDR'].TrimStart(':') } else { '8080' }
+    $token = if ($envH.ContainsKey('CFDM_API_TOKEN')) { $envH['CFDM_API_TOKEN'] } else { '' }
+
+    Write-Host "[*] watch 模式: 每 ${interval}s 刷新, Ctrl+C 退出" -ForegroundColor Blue
+    Start-Sleep -Milliseconds 600
+
+    try {
+        while ($true) {
+            Clear-Host
+            $now = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+            Write-Host "cfdmgrd watch — $now  (每 ${interval}s 刷新, Ctrl+C 退出)" -ForegroundColor White
+            Write-Host '────────────────────────────────────────────'
+
+            # 服务状态
+            $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+            if ($svc) {
+                $color = if ($svc.Status -eq 'Running') { 'Green' } else { 'Yellow' }
+                Write-Host ("  服务      : ") -NoNewline
+                Write-Host $svc.Status -ForegroundColor $color -NoNewline
+                Write-Host ("  ({0})" -f $ServiceName)
+            } else {
+                Write-Host '  服务      : 未安装' -ForegroundColor Red
+            }
+            Write-Host ("  监听      : :{0}" -f $port)
+
+            # 进程信息
+            try {
+                $proc = Get-Process -Name ($BinName -replace '\.exe$','') -ErrorAction SilentlyContinue |
+                    Select-Object -First 1
+                if ($proc) {
+                    $cpuMs = if ($proc.CPU) { [math]::Round($proc.CPU, 1) } else { 0 }
+                    $memMB = [math]::Round($proc.WorkingSet64 / 1MB, 1)
+                    Write-Host ("  PID/CPU/MEM: {0} / {1}s / {2} MB" -f $proc.Id, $cpuMs, $memMB)
+                } else {
+                    Write-Host '  PID/CPU/MEM: (无进程)' -ForegroundColor Yellow
+                }
+            } catch { }
+
+            # API 健康
+            $apiOk = $false; $apiMsg = '未知'
+            try {
+                $hdr = if ($token) { @{ 'Authorization' = "Bearer $token" } } else { @{} }
+                $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/v1/version" -Headers $hdr -UseBasicParsing -TimeoutSec 3
+                $apiOk = $true
+                if ($resp.version) { $apiMsg = "版本 $($resp.version)" } else { $apiMsg = 'OK' }
+            } catch {
+                $apiMsg = $_.Exception.Message
+            }
+            if ($apiOk) {
+                Write-Host ("  API       : ") -NoNewline
+                Write-Host 'OK' -ForegroundColor Green -NoNewline
+                Write-Host ("  {0}" -f $apiMsg)
+            } else {
+                Write-Host ("  API       : ") -NoNewline
+                Write-Host 'FAIL' -ForegroundColor Red -NoNewline
+                Write-Host ("  {0}" -f $apiMsg)
+            }
+
+            # 实例快照
+            if ($token) {
+                try {
+                    $hdr = @{ 'Authorization' = "Bearer $token" }
+                    $cfgs = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/v1/configs" -Headers $hdr -UseBasicParsing -TimeoutSec 3
+                    $list = @()
+                    if ($cfgs -is [System.Array]) { $list = $cfgs }
+                    elseif ($cfgs.items) { $list = $cfgs.items }
+                    Write-Host ''
+                    Write-Host ("实例 ({0}):" -f $list.Count) -ForegroundColor White
+                    foreach ($it in $list | Select-Object -First 20) {
+                        $nm = if ($it.name) { $it.name } else { $it.id }
+                        $st = if ($it.state) { $it.state } else { '?' }
+                        $stColor = switch ($st) {
+                            'running' { 'Green' }
+                            'starting' { 'Yellow' }
+                            'stopped' { 'Gray' }
+                            default { 'Yellow' }
+                        }
+                        Write-Host ('  - {0,-24} ' -f $nm) -NoNewline
+                        Write-Host $st -ForegroundColor $stColor
+                    }
+                } catch { }
+            }
+
+            Write-Host ''
+            Write-Host '────────────────────────────────────────────'
+            Start-Sleep -Seconds $interval
+        }
+    } finally {
+        Write-Host ''
+        Write-Host '[+] 已退出 watch' -ForegroundColor Green
+    }
+}
 function Show-Usage {
     Write-Host @"
 cfm — cfdmgrd 管理命令
@@ -735,25 +1160,32 @@ cfm — cfdmgrd 管理命令
 用法: cfm <命令> [参数]
 
 服务管理:
-  start            启动服务
-  stop             停止服务
-  restart          重启服务
-  status           查看运行状态
-  logs [-f]        查看日志 (加 -f 实时跟踪)
-  enable           设置开机自启
-  disable          取消开机自启
+  start                    启动服务
+  stop                     停止服务
+  restart                  重启服务
+  status                   查看运行状态
+  logs [-f]                查看日志 (加 -f 实时跟踪)
+  enable                   设置开机自启
+  disable                  取消开机自启
 
 信息查看:
-  info             显示完整运行信息 (地址/令牌/路径/状态) + 命令面板
-  config [edit]    查看 (或 edit 用 NSSM 图形界面编辑) 服务配置
-  version          显示版本信息
+  info                     显示完整运行信息 (地址/令牌/路径/状态) + 命令面板
+  config [edit]            查看 (或 edit 用 NSSM 图形界面编辑) 服务配置
+  version                  显示版本信息
 
 安装维护:
-  install [参数]   重新安装 (参数透传给 install.ps1)
-  update [参数]    更新到最新版 (保留端口/令牌/数据)
-  uninstall        卸载
+  install [--version=X]    重新安装 (参数透传给 install.ps1)
+  update  [--version=X]    更新到最新版 (保留端口/令牌/数据)
+  uninstall [--purge]      卸载 (默认保留数据; --purge 同时删除 DATA_DIR)
 
-  help             显示本帮助
+进阶:
+  doctor                   8 项健康自检 (进程/端口/Token/二进制/数据目录/DNS/CF/代理)
+  backup [<路径>] [--include-logs]
+                           打包配置/数据为 zip (默认当前目录, --include-logs 一并打包日志)
+  restore <路径> [--force] 从备份恢复 (会先停服; --force 覆盖已有数据)
+  watch [--interval=N]     终端实时面板 (默认每 2s 刷新, Ctrl+C 退出)
+
+  help                     显示本帮助
 "@
 }
 
@@ -777,10 +1209,22 @@ switch ($Cmd.ToLower()) {
     'update'    { Invoke-Installer (@('-Update') + $Rest) }
     'install'   { Invoke-Installer $Rest }
     'uninstall' {
-        Invoke-Installer @('-Uninstall')
+        $purge = $false
+        foreach ($r in $Rest) { if ($r -in @('--purge', '-purge', 'purge')) { $purge = $true } }
+        if ($purge) {
+            # 标记 -Yes + ASSUME_YES 让 install.ps1 在确认数据目录时走默认 (此处仍交互, 故借用 env)
+            $env:ASSUME_YES = '1'
+            Invoke-Installer @('-Uninstall', '-Yes')
+        } else {
+            Invoke-Installer @('-Uninstall')
+        }
         Remove-Item -Force (Join-Path $InstallDir 'cfm.cmd'), (Join-Path $InstallDir 'cfm.ps1') -ErrorAction SilentlyContinue
         exit 0
     }
+    'doctor'    { Do-Doctor; exit 0 }
+    'backup'    { Do-Backup; exit 0 }
+    'restore'   { Do-Restore; exit 0 }
+    'watch'     { Do-Watch; exit 0 }
     default {
         Show-Usage
         if ($Cmd.ToLower() -in @('help', '-h', '--help', '-help')) { exit 0 } else { exit 2 }
