@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import {
   Card, Row, Col, Button, Badge, Space, Typography, Popconfirm,
   Form, Input, Switch, Modal, message, Tooltip, Empty, List,
@@ -28,6 +28,7 @@ import { useEventSubscription } from '../events/EventStreamContext';
 import type { InstanceStateData } from '../events/types';
 import type { Snapshot, ConfigEnvelope, MgrMeta, TunnelConfigV1 } from '../api/types';
 import InstanceDetailPanel from '../components/instance/InstanceDetailPanel';
+import { extractCloudflaredToken } from '../utils/cfToken';
 
 const { Title, Text } = Typography;
 
@@ -249,10 +250,10 @@ const Configs: React.FC = () => {
       message.error('YAML 解析失败：' + (e as Error).message);
       return;
     }
-    // token 永远由密码字段管理：先从 YAML 剔除，仅当用户填写了才提交；
-    // 留空时后端会保留实例现有 token。
+    // token 永远由专用字段管理：先从 YAML 剔除，仅当用户填写了才提交；
+    // 留空时后端会保留实例现有 token。用户可粘贴整条安装命令，提取出裸 token。
     delete parsed.token;
-    if (values.token) parsed.token = values.token;
+    if (values.token) parsed.token = extractCloudflaredToken(values.token);
 
     const cfdmgr: MgrMeta = {
       name: values.name || (editingId ?? values.id),
@@ -323,6 +324,26 @@ const Configs: React.FC = () => {
   };
 
   const activeSnap = configs.find((c) => c.id === activeConfigId);
+
+  // 实时识别 token 输入框里贴的内容（支持整条安装命令）。
+  const watchedToken: string | undefined = Form.useWatch('token', form);
+  const tokenHint = useMemo(() => {
+    const raw = (watchedToken || '').trim();
+    if (raw) {
+      const t = extractCloudflaredToken(raw);
+      const looksToken = /^eyJ[A-Za-z0-9_\-+/=]+$/.test(t) && t.length >= 100;
+      if (looksToken) {
+        const mask = `${t.slice(0, 4)}…${t.slice(-4)}`;
+        return `✓ 已识别 token ${mask}（${t.length} 字符）${t !== raw ? ' · 已从命令中自动提取' : ''}`;
+      }
+      return '⚠ 未识别到 cloudflared token（应为 eyJ 开头、≥100 字符的 base64）';
+    }
+    return editingId
+      ? hasToken
+        ? '已设置；留空保持不变。可直接粘贴整条安装命令，自动提取 token'
+        : '尚未设置。可粘贴裸 token 或整条安装命令，自动提取 token'
+      : '可粘贴裸 token，或整条安装命令（service install / tunnel run --token / docker run …），自动提取';
+  }, [watchedToken, editingId, hasToken]);
 
   return (
     <div style={{ height: '100%' }}>
@@ -472,14 +493,22 @@ const Configs: React.FC = () => {
           <Form.Item label="显示名称" name="name">
             <Input placeholder="例如: 生产隧道" />
           </Form.Item>
-          <Form.Item
-            label="Cloudflared Token"
-            name="token"
-            extra={editingId
-              ? (hasToken ? '已设置；留空表示保持不变' : '尚未设置 token')
-              : '隧道 connector token（约 100+ 字符 base64）'}
-          >
-            <Input.Password placeholder={editingId && hasToken ? '留空 = 保持现有 token' : '粘贴 Cloudflare 隧道 token'} />
+          <Form.Item label="Cloudflared Token" name="token" extra={tokenHint}>
+            <Input.TextArea
+              autoSize={{ minRows: 2, maxRows: 5 }}
+              placeholder={
+                editingId && hasToken
+                  ? '留空 = 保持现有 token；或粘贴新 token / 整条安装命令'
+                  : '粘贴裸 token，或整条安装命令（如 cloudflared service install eyJ… / tunnel run --token eyJ…），保存时自动提取'
+              }
+              onBlur={() => {
+                const v = form.getFieldValue('token');
+                if (v) {
+                  const t = extractCloudflaredToken(v);
+                  if (t !== v) form.setFieldValue('token', t);
+                }
+              }}
+            />
           </Form.Item>
           <Form.Item label="手动启动" name="manualStart" valuePropName="checked" initialValue={false}>
             <Switch checkedChildren="手动启动" unCheckedChildren="随服务启动" />

@@ -102,7 +102,7 @@ const MainLayout: React.FC = () => {
         type: 'group',
         label: '运行',
         children: [
-          { key: '/configs', icon: <ClusterOutlined />, label: 'cloudflared 实例' },
+          { key: '/configs', icon: <ClusterOutlined />, label: 'Cloudflared 实例' },
           { key: '/binaries', icon: <CloudDownloadOutlined />, label: '二进制管理' },
           { key: '/traffic', icon: <LineChartOutlined />, label: '历史流量' },
           { key: '/alerts', icon: <BellOutlined />, label: '告警' },
