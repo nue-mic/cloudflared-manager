@@ -172,6 +172,112 @@ func (h *LogsHandler) Tail(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Stream upgrades to WebSocket and streams STRUCTURED log Entries for the
+// instance: cloudflared's --output=json lines parsed into {seq,time,level,...}.
+// Unlike Tail (which forwards raw file lines), Stream subscribes to the
+// in-memory ProcessTailer so the UI gets level/conn_index/fields for colouring
+// and filtering.
+//
+// GET /api/v1/configs/{id}/logs/stream?token=&level=&keyword=&conn_index=&backlog=
+//
+// Frame format (uniform): every text frame is {"entries":[Entry,...]}. On
+// connect a single backlog frame is sent (oldest→newest, honouring the
+// LogViewSince watermark + query filter); thereafter each new line arrives as
+// a one-element frame. The frontend dedups by Entry.seq because Stream
+// subscribes before snapshotting (so no line is lost in the gap, at the cost of
+// a possible duplicate at the boundary).
+func (h *LogsHandler) Stream(w http.ResponseWriter, r *http.Request) {
+	id := pathID(r)
+	tailer, ok := h.m.Tailer(id)
+	if !ok {
+		WriteError(w, http.StatusNotFound, CodeConfigNotFound, "config not found", nil)
+		return
+	}
+
+	filter := parseLogFilter(r)
+	if since := h.m.LogViewSince(id); since > 0 {
+		filter.Since = time.UnixMilli(since)
+	}
+	backlog := atoiDefault(r.URL.Query().Get("backlog"), 500)
+
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		InsecureSkipVerify: middleware.IsWildcard(h.origins),
+		OriginPatterns:     h.origins,
+	})
+	if err != nil {
+		h.log.Warn("ws accept failed", slog.Any("err", err))
+		return
+	}
+	defer conn.Close(websocket.StatusInternalError, "internal error")
+	ctx := conn.CloseRead(r.Context())
+
+	// Subscribe BEFORE the snapshot so lines arriving in between are not lost.
+	ch, cancel := tailer.Subscribe(filter)
+	defer cancel()
+
+	if backlogEntries := tailer.Snapshot(filter, backlog); len(backlogEntries) > 0 {
+		if !writeEntries(ctx, conn, backlogEntries) {
+			return
+		}
+	}
+
+	ping := time.NewTicker(30 * time.Second)
+	defer ping.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case e, ok := <-ch:
+			if !ok {
+				return
+			}
+			if !writeEntries(ctx, conn, []logtail.Entry{e}) {
+				return
+			}
+		case <-ping.C:
+			pctx, c := context.WithTimeout(ctx, 5*time.Second)
+			if err := conn.Ping(pctx); err != nil {
+				c()
+				return
+			}
+			c()
+		}
+	}
+}
+
+// parseLogFilter builds a logtail.Filter from the WS query parameters.
+func parseLogFilter(r *http.Request) logtail.Filter {
+	f := logtail.Filter{
+		MinLevel: strings.TrimSpace(r.URL.Query().Get("level")),
+		Keyword:  r.URL.Query().Get("keyword"),
+	}
+	if ci := strings.TrimSpace(r.URL.Query().Get("conn_index")); ci != "" {
+		if n, err := strconv.Atoi(ci); err == nil {
+			f.ConnIndex = &n
+		}
+	}
+	return f
+}
+
+// marshalEntriesFrame encodes a batch of Entries into the wire frame the
+// frontend consumes: {"entries":[Entry,...]} with snake_case Entry fields.
+func marshalEntriesFrame(entries []logtail.Entry) ([]byte, error) {
+	return json.Marshal(map[string]any{"entries": entries})
+}
+
+// writeEntries sends one {"entries":[...]} frame. Returns false on any write
+// error so the caller can tear down the connection.
+func writeEntries(ctx context.Context, conn *websocket.Conn, entries []logtail.Entry) bool {
+	payload, err := marshalEntriesFrame(entries)
+	if err != nil {
+		return false
+	}
+	wctx, c := context.WithTimeout(ctx, 5*time.Second)
+	defer c()
+	return conn.Write(wctx, websocket.MessageText, payload) == nil
+}
+
 func atoiDefault(s string, def int) int {
 	if s == "" {
 		return def

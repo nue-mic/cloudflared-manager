@@ -6,7 +6,8 @@ export type EventType =
   | 'proxy.connections'
   | 'config.changed'
   | 'config.deleted'
-  | 'log.line';
+  | 'log.line'
+  | 'alert';
 
 export interface BusEvent<T = unknown> {
   seq: number;
@@ -41,6 +42,19 @@ export interface ProxyConnectionsData {
 
 export interface LogLineData {
   line: string;
+}
+
+// alert 事件载荷（对应 sampler.publishAlert 的 map 负载，snake_case）
+export interface AlertData {
+  rule_id: string;
+  rule_name: string;
+  target: string;
+  state: 'firing' | 'resolved';
+  value: number;
+  threshold: number;
+  metric: string;
+  fired_at: number;
+  resolved_at: number;
 }
 
 export type ConnState = 'idle' | 'connecting' | 'open' | 'closed' | 'error';

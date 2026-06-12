@@ -148,6 +148,18 @@ func (s *Store) Resolve(version string) (string, error) {
 	return p, nil
 }
 
+// ActiveVersion returns the version tag recorded in active.json, or "" when
+// none is set or the file is unreadable. Unlike Resolve it does NOT verify the
+// binary exists on disk — callers use it for display ("which version is
+// configured to run"), not for execution.
+func (s *Store) ActiveVersion() string {
+	v, err := s.readActive()
+	if err != nil {
+		return ""
+	}
+	return v
+}
+
 // InstalledVersion describes one entry returned by List.
 type InstalledVersion struct {
 	Version      string    `json:"version"`

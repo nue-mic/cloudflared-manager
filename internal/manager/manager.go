@@ -15,6 +15,7 @@ import (
 
 	"github.com/mia-clark/cloudflared-manager/internal/cfdbin"
 	"github.com/mia-clark/cloudflared-manager/internal/eventbus"
+	"github.com/mia-clark/cloudflared-manager/internal/logtail"
 	"github.com/mia-clark/cloudflared-manager/pkg/cfdconfig"
 	"github.com/mia-clark/cloudflared-manager/pkg/cfdstate"
 )
@@ -156,6 +157,33 @@ func (m *Manager) get(id string) *instance {
 // Exists reports whether an instance with this id is registered.
 func (m *Manager) Exists(id string) bool { return m.get(id) != nil }
 
+// Tailer returns the per-instance ProcessTailer so the API logs handler can
+// subscribe to live structured log output (and replay the ring backlog). It
+// returns (nil, false) when the instance is not registered. The tailer
+// outlives any single run: its ring buffer keeps the last lines even after the
+// child exits, so a stopped instance still shows recent history.
+func (m *Manager) Tailer(id string) (*logtail.ProcessTailer, bool) {
+	inst := m.get(id)
+	if inst == nil {
+		return nil, false
+	}
+	return inst.Tailer(), true
+}
+
+// resolveBinaryVersion maps a config's binaryVersion field to a display
+// version: a pinned tag wins; "" / "current" resolves to the store's active
+// version (or "" when no store / no active version is set).
+func (m *Manager) resolveBinaryVersion(configured string) string {
+	v := strings.TrimSpace(configured)
+	if v != "" && v != "current" {
+		return v
+	}
+	if m.binStore != nil {
+		return m.binStore.ActiveVersion()
+	}
+	return ""
+}
+
 // orderedIDs returns all instance ids sorted by meta.json Sort (unknown ids
 // appended in id order) for deterministic boot/list ordering.
 func (m *Manager) orderedIDs() []string {
@@ -229,6 +257,7 @@ func (m *Manager) Get(id string) (Snapshot, *cfdconfig.TunnelConfigV1, MgrMeta, 
 	snap := inst.Snapshot()
 	snap.Name = m.nameOf(id)
 	snap.LogPath = m.LogPath(id)
+	snap.BinaryVersion = m.resolveBinaryVersion(sc.BinaryVersion)
 	mm := MgrMeta{Name: m.nameOf(id), ManualStart: m.meta.manualStart(id)}
 	return snap, sc, mm, nil
 }

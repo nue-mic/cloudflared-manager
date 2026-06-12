@@ -53,6 +53,8 @@ func NewRouter(d Deps) http.Handler {
 	validate := NewValidateHandler()
 	events := NewEventsHandler(d.Manager, d.Logger, d.Cfg.CORSOrigins)
 	logs := NewLogsHandler(d.Manager, d.Cfg.LogsDir, d.Logger, d.Cfg.CORSOrigins)
+	live := NewLiveHandler(d.Manager, d.Logger)
+	projection := NewProjectionHandler(d.Manager, d.BinaryStore, d.Logger)
 	imex := NewImportExportHandler(d.Manager, d.Logger)
 	mh := NewMetricsHandler(d.Metrics)
 	upd := NewUpdateHandler(d.Cfg.DataDir, d.Cfg.SelfUpdateEnabled, d.Logger)
@@ -99,6 +101,11 @@ func NewRouter(d Deps) http.Handler {
 		r.Get("/api/v1/configs/{id}/logs/files", logs.Files)
 		r.Delete("/api/v1/configs/{id}/logs", logs.Clear)
 		r.Get("/api/v1/configs/{id}/logs/tail", logs.Tail)
+		r.Get("/api/v1/configs/{id}/logs/stream", logs.Stream)
+
+		// 单实例实时状态（按需抓 cloudflared /metrics）+ 运行参数投影
+		r.Get("/api/v1/configs/{id}/live", live.Get)
+		r.Get("/api/v1/configs/{id}/projection", projection.Get)
 
 		r.Get("/api/v1/events", events.Subscribe)
 
