@@ -7,6 +7,8 @@ import type {
   AvailableList,
   BinaryItem,
   TrafficSeries,
+  LiveStatus,
+  Projection,
 } from './types';
 
 // localStorage key
@@ -107,3 +109,31 @@ export const metricsApi = {
     params: { scope?: string; key?: string; from?: number; to: number; step?: number }
   ) => client.get<TrafficSeries>(`/api/v1/metrics/${encodeURIComponent(id)}/traffic`, { params }),
 };
+
+// ── 单实例实时状态 / 运行参数投影 ──────────────────────────────────────────────
+export const instanceApi = {
+  // 按需抓 cloudflared /metrics；未运行返回 {running:false}（HTTP 仍 200）。
+  live: (id: string) =>
+    client.get<LiveStatus>(`/api/v1/configs/${encodeURIComponent(id)}/live`),
+  // cfdflags 投影出的真实 TUNNEL_* env/argv（token 已脱敏）。
+  projection: (id: string) =>
+    client.get<Projection>(`/api/v1/configs/${encodeURIComponent(id)}/projection`),
+};
+
+// 结构化实时日志 WS 地址。浏览器 WS 无法自定义 Header，故 token / 过滤走 query。
+export function logStreamUrl(
+  id: string,
+  filter?: { level?: string; keyword?: string; connIndex?: number; backlog?: number }
+): string {
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const params = new URLSearchParams();
+  const token = getAPIToken();
+  if (token) params.set('token', token);
+  if (filter?.level) params.set('level', filter.level);
+  if (filter?.keyword) params.set('keyword', filter.keyword);
+  if (filter?.connIndex != null) params.set('conn_index', String(filter.connIndex));
+  if (filter?.backlog != null) params.set('backlog', String(filter.backlog));
+  return `${proto}//${window.location.host}/api/v1/configs/${encodeURIComponent(
+    id
+  )}/logs/stream?${params.toString()}`;
+}

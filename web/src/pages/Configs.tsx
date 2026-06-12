@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import {
   Card, Row, Col, Button, Badge, Space, Typography, Popconfirm,
-  Form, Input, Switch, Modal, message, Tag, Tooltip, Empty, List,
+  Form, Input, Switch, Modal, message, Tooltip, Empty, List,
   theme as antdTheme,
 } from 'antd';
 import {
@@ -27,6 +27,7 @@ import { useTheme } from '../theme/ThemeContext';
 import { useEventSubscription } from '../events/EventStreamContext';
 import type { InstanceStateData } from '../events/types';
 import type { Snapshot, ConfigEnvelope, MgrMeta, TunnelConfigV1 } from '../api/types';
+import InstanceDetailPanel from '../components/instance/InstanceDetailPanel';
 
 const { Title, Text } = Typography;
 
@@ -425,80 +426,17 @@ const Configs: React.FC = () => {
 
         {/* 右栏：实例详情 */}
         <Col xs={24} md={16}>
-          {activeConfigId ? (
-            <Card bordered={false} styles={{ body: { padding: 20 } }}
-              style={{ height: '100%', minHeight: 520, borderRadius: 10 }}>
-              <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>当前实例</Text>
-                  <Title level={4} style={{ margin: '4px 0 0 0' }}>{activeSnap?.name || activeConfigId}</Title>
-                </div>
-                <Space>
-                  {getStatusBadge(activeSnap?.state)}
-                  <Button icon={<EditOutlined />} onClick={() => openEdit(activeConfigId)}>
-                    编辑配置
-                  </Button>
-                </Space>
-              </div>
-
-              <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>ID</Text>
-                  <div><Text code>{activeSnap?.id}</Text></div>
-                </div>
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>状态</Text>
-                  <div>
-                    <Tag color={
-                      activeSnap?.state === 'started' ? 'success' :
-                      activeSnap?.state === 'starting' || activeSnap?.state === 'stopping' ? 'processing' :
-                      'default'
-                    }>
-                      {activeSnap?.state || 'stopped'}
-                    </Tag>
-                  </div>
-                </div>
-                {activeSnap?.last_error && (
-                  <div>
-                    <Text type="secondary" style={{ fontSize: 12 }}>最近错误</Text>
-                    <div><Text type="danger" style={{ fontSize: 12 }}>{activeSnap.last_error}</Text></div>
-                  </div>
-                )}
-                {activeSnap?.started_at && (
-                  <div>
-                    <Text type="secondary" style={{ fontSize: 12 }}>启动时间</Text>
-                    <div><Text style={{ fontSize: 12 }}>{activeSnap.started_at}</Text></div>
-                  </div>
-                )}
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>配置文件路径</Text>
-                  <div><Text code style={{ fontSize: 12 }}>{activeSnap?.path || '—'}</Text></div>
-                </div>
-              </Space>
-
-              <div style={{ marginTop: 24, display: 'flex', gap: 8 }}>
-                {activeSnap?.state !== 'started' ? (
-                  <Button type="primary" icon={<PlayCircleOutlined />}
-                    style={{ background: '#52c41a', borderColor: '#52c41a' }}
-                    onClick={() => handleStart(activeConfigId)}>
-                    启动
-                  </Button>
-                ) : (
-                  <>
-                    <Button type="primary" danger icon={<StopOutlined />}
-                      onClick={() => handleStop(activeConfigId)}>停止</Button>
-                    <Button icon={<ReloadOutlined />} onClick={() => handleReload(activeConfigId)}>重启</Button>
-                  </>
-                )}
-                <Popconfirm
-                  title={`确定删除「${activeSnap?.name || activeConfigId}」？`}
-                  onConfirm={() => handleDelete(activeConfigId)}
-                  okText="删除" okType="danger" cancelText="取消"
-                >
-                  <Button danger icon={<DeleteOutlined />}>删除</Button>
-                </Popconfirm>
-              </div>
-            </Card>
+          {activeSnap ? (
+            <InstanceDetailPanel
+              snap={activeSnap}
+              loading={statusLoading[activeSnap.id]}
+              onStart={() => handleStart(activeSnap.id)}
+              onStop={() => handleStop(activeSnap.id)}
+              onReload={() => handleReload(activeSnap.id)}
+              onEdit={() => openEdit(activeSnap.id)}
+              onDuplicate={() => openDuplicate(activeSnap.id)}
+              onDelete={() => handleDelete(activeSnap.id)}
+            />
           ) : (
             <Card style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '100px 0', borderRadius: 10 }}>
               <Empty description="请在左侧选择或创建一个 cloudflared 隧道配置。" />

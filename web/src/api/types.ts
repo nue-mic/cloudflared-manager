@@ -95,14 +95,58 @@ export interface TokenInfo {
   length: number;
 }
 
-// ── 日志条目（snake_case）────────────────────────────────────────────────────
+// ── 日志条目（snake_case，对应 logtail.Entry）─────────────────────────────────
+// WS /configs/{id}/logs/stream 的帧元素。seq/time/level/message/raw/source 必有
+// （后端无 omitempty）；event/conn_index/tunnel_id/fields 可选。
 export interface LogEntry {
+  seq: number;
   time: string;
   level: string;
   message: string;
-  source?: string;
-  raw?: string;
+  event?: number;
+  conn_index?: number;
+  tunnel_id?: string;
+  raw: string;
+  fields?: Record<string, unknown>;
+  source: string;
   [key: string]: unknown;
+}
+
+// WS /logs/stream 帧：{ entries: LogEntry[] }
+export interface LogStreamFrame {
+  entries: LogEntry[];
+}
+
+// ── 实例实时状态（snake_case，对应 metrics.LiveStatus）──────────────────────────
+// GET /configs/{id}/live：按需抓 cloudflared /metrics，不落库。未运行仅 running=false。
+export interface EdgeConnection {
+  conn_index: number;
+  location?: string;
+  rtt?: number; // smoothed RTT，cloudflared 原生单位（仅标 RTT，不臆断 ms）
+  lost_packets?: number;
+}
+export interface LiveStatus {
+  running: boolean;
+  scraped_at?: number;
+  ha_connections: number;
+  requests_total: number;
+  request_errors: number;
+  response_5xx: number;
+  goroutines: number;
+  resident_memory_bytes: number;
+  version?: string;
+  protocol?: string;
+  connections: EdgeConnection[] | null; // 后端无 omitempty，空时为 null
+  error?: string;
+}
+
+// ── 运行参数投影（GET /configs/{id}/projection）───────────────────────────────
+// cfdflags 投影出的真实 TUNNEL_* env/argv。env 内 TUNNEL_TOKEN 已脱敏。
+export interface Projection {
+  env: Record<string, string>;
+  argv: string[];
+  binary_version: string;
+  binary_path: string;
 }
 
 // ── 二进制管理（snake_case，对应 cfdbin.InstalledVersion）─────────────────────

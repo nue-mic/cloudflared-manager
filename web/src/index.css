@@ -110,3 +110,21 @@ body {
 .log-warn { color: #faad14; }
 .log-error { color: #ff4d4f; }
 .log-debug { color: #1677ff; }
+.log-fatal { color: #ff7875; font-weight: 600; }
+.log-unknown { color: #9aa4af; }
+
+/* 结构化日志面板：时间戳 / 级别标签 / 消息 / 关键字高亮 / 换行切换 */
+.log-ts { color: #6b7280; margin-right: 8px; }
+.log-lvl {
+  display: inline-block;
+  min-width: 44px;
+  margin-right: 8px;
+  font-weight: 600;
+  text-transform: uppercase;
+  opacity: 0.9;
+}
+.log-src { color: #6b7280; font-style: italic; margin-right: 6px; }
+.log-msg { color: #d1d5db; }
+.log-line.log-daemon { opacity: 0.85; font-style: italic; }
+.log-hl { background: #fadb14; color: #1f1f1f; border-radius: 2px; padding: 0 1px; }
+.log-line.nowrap { white-space: pre; word-break: normal; overflow-x: hidden; }
