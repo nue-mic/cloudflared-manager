@@ -104,7 +104,7 @@ export default function InstanceDetailPanel({
     {
       key: 'logs',
       label: (<span><FileTextOutlined /> 日志</span>),
-      children: <InstanceLogPanel id={snap.id} height={440} />,
+      children: <InstanceLogPanel id={snap.id} height="calc(100vh - 300px)" />,
     },
     {
       key: 'metrics',

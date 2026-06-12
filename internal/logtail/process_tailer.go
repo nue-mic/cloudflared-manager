@@ -134,6 +134,9 @@ func parseLine(raw, source string) Entry {
 
 	trim := strings.TrimSpace(raw)
 	if len(trim) == 0 || trim[0] != '{' {
+		// Not JSON. cloudflared 2026.x emits zerolog console TEXT even with
+		// TUNNEL_OUTPUT=json, so try that shape before giving up to "unknown".
+		tryParseZerolog(trim, &e)
 		return e
 	}
 
@@ -192,6 +195,54 @@ func normaliseLevel(s string) string {
 	default:
 		return "unknown"
 	}
+}
+
+// tryParseZerolog parses cloudflared's zerolog console text format
+// "<RFC3339> <LVL> <message...>". On a match it overwrites e.Time / e.Level /
+// e.Message with the extracted values and returns true; otherwise it leaves e
+// untouched (so genuinely free-form text stays an "unknown" entry whose
+// message is the whole raw line).
+func tryParseZerolog(line string, e *Entry) bool {
+	parts := strings.SplitN(line, " ", 3)
+	if len(parts) < 2 {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339Nano, parts[0])
+	if err != nil {
+		return false
+	}
+	lvl := zerologLevel(parts[1])
+	if lvl == "" {
+		return false
+	}
+	e.Time = t.UTC()
+	e.Level = lvl
+	if len(parts) == 3 {
+		e.Message = parts[2]
+	} else {
+		e.Message = ""
+	}
+	return true
+}
+
+// zerologLevel maps zerolog's 3-letter console abbreviations (and the full
+// words, defensively) onto the canonical level set. Returns "" when the token
+// is not a recognised level, so an arbitrary line that merely starts with an
+// RFC3339 timestamp is not misclassified.
+func zerologLevel(s string) string {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case "TRC", "TRACE", "DBG", "DEBUG":
+		return "debug"
+	case "INF", "INFO":
+		return "info"
+	case "WRN", "WARN", "WARNING":
+		return "warn"
+	case "ERR", "ERROR":
+		return "error"
+	case "FTL", "FATAL", "PNC", "PANIC":
+		return "fatal"
+	}
+	return ""
 }
 
 // append assigns the next Seq, inserts the Entry into the ring, and

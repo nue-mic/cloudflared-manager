@@ -49,6 +49,44 @@ func TestParse_RawFallback_NonJSON(t *testing.T) {
 	}
 }
 
+func TestParse_ZerologConsole(t *testing.T) {
+	// cloudflared 2026.x emits zerolog console TEXT (not JSON) even with
+	// TUNNEL_OUTPUT=json: "<RFC3339> <LVL> <message...>". The tailer must
+	// extract the real level/time/message instead of dumping the whole line
+	// as an "unknown" entry whose message duplicates the timestamp+level.
+	cases := []struct {
+		raw     string
+		level   string
+		message string
+	}{
+		{"2026-06-12T15:55:05Z INF Starting tunnel tunnelID=61f2a54b", "info", "Starting tunnel tunnelID=61f2a54b"},
+		{"2026-06-12T15:55:05.123Z WRN retrying connection", "warn", "retrying connection"},
+		{"2026-06-12T15:55:05Z ERR boom err=eof", "error", "boom err=eof"},
+		{"2026-06-12T15:55:05Z DBG verbose", "debug", "verbose"},
+		{"2026-06-12T15:55:05Z FTL fatal stop", "fatal", "fatal stop"},
+	}
+	for _, c := range cases {
+		p := logtail.NewProcessTailer("z", 100)
+		p.Attach(strings.NewReader(c.raw+"\n"), nil)
+		time.Sleep(40 * time.Millisecond)
+		got := p.Snapshot(logtail.Filter{}, 0)
+		p.Stop()
+		if len(got) != 1 {
+			t.Fatalf("%q: len=%d want 1", c.raw, len(got))
+		}
+		e := got[0]
+		if e.Level != c.level {
+			t.Errorf("%q: level=%q want %q", c.raw, e.Level, c.level)
+		}
+		if e.Message != c.message {
+			t.Errorf("%q: message=%q want %q", c.raw, e.Message, c.message)
+		}
+		if y := e.Time.Year(); y != 2026 {
+			t.Errorf("%q: time not parsed, year=%d", c.raw, y)
+		}
+	}
+}
+
 func TestParse_RawFallback_MalformedJSON(t *testing.T) {
 	p := logtail.NewProcessTailer("inst-1", 100)
 	defer p.Stop()

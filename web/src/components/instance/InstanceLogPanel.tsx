@@ -32,22 +32,33 @@ interface Props {
   height?: number | string;
 }
 
+// 规范级别 → CSS 修饰类（lv-info / lv-warn / …），同时用于整行与级别徽章。
 function levelClass(level: string): string {
   switch (level) {
     case 'warn':
-      return 'log-warn';
+      return 'lv-warn';
     case 'error':
-      return 'log-error';
+      return 'lv-error';
     case 'fatal':
-      return 'log-fatal';
+      return 'lv-fatal';
     case 'debug':
-      return 'log-debug';
+      return 'lv-debug';
     case 'info':
-      return 'log-info';
+      return 'lv-info';
     default:
-      return 'log-unknown';
+      return 'lv-unknown';
   }
 }
+
+// 级别徽章短标签。unknown 用「—」淡化（cloudflared 文本行解析失败时才会出现）。
+const LEVEL_LABEL: Record<string, string> = {
+  debug: 'DEBUG',
+  info: 'INFO',
+  warn: 'WARN',
+  error: 'ERROR',
+  fatal: 'FATAL',
+  unknown: '—',
+};
 
 // 在 text 中把（大小写不敏感的）keyword 命中包成高亮 span。
 function highlight(text: string, kw: string): ReactNode {
@@ -211,7 +222,7 @@ export default function InstanceLogPanel({ id, height = 460 }: Props) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height, minHeight: 320 }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 10, justifyContent: 'space-between' }}>
         <Space wrap>
           <Select size="small" style={{ width: 130 }} value={level} onChange={setLevel} options={LEVEL_OPTIONS} />
@@ -261,23 +272,26 @@ export default function InstanceLogPanel({ id, height = 460 }: Props) {
           ref={scrollRef}
           onScroll={onScroll}
           className="terminal-container"
-          style={{ position: 'absolute', inset: 0, height, overflowY: 'auto' }}
+          style={{ position: 'absolute', inset: 0, overflowY: 'auto' }}
         >
           {filtered.length === 0 ? (
             <div style={{ padding: '40px 0', textAlign: 'center', opacity: 0.55 }}>
               {kw ? '无匹配日志行' : paused ? '已暂停接收' : '暂无日志输出，等待推送…'}
             </div>
           ) : (
-            filtered.map((e) => (
-              <div
-                key={e.seq}
-                className={`log-line ${e.source === 'daemon' ? 'log-daemon' : ''} ${wrap ? '' : 'nowrap'}`}
-              >
-                {showTs && <span className="log-ts">{fmtTime(e.time)}</span>}
-                <span className={`log-lvl ${levelClass(e.level)}`}>{e.level}</span>
-                <span className="log-msg">{highlight(e.message || e.raw, kw)}</span>
-              </div>
-            ))
+            filtered.map((e) => {
+              const lv = levelClass(e.level);
+              return (
+                <div
+                  key={e.seq}
+                  className={`log-line ${lv} ${e.source === 'daemon' ? 'log-daemon' : ''} ${wrap ? '' : 'nowrap'}`}
+                >
+                  {showTs && <span className="log-ts">{fmtTime(e.time)}</span>}
+                  <span className={`log-lvl ${lv}`}>{LEVEL_LABEL[e.level] ?? e.level.toUpperCase()}</span>
+                  <span className="log-msg">{highlight(e.message || e.raw, kw)}</span>
+                </div>
+              );
+            })
           )}
         </div>
 

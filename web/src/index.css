@@ -102,29 +102,58 @@ body {
 }
 .log-line {
   margin: 0;
-  padding: 2px 0;
+  padding: 2px 6px;
   white-space: pre-wrap;
   word-break: break-all;
+  line-height: 1.55;
+  border-left: 2px solid transparent;
 }
-.log-info { color: #52c41a; }
-.log-warn { color: #faad14; }
-.log-error { color: #ff4d4f; }
-.log-debug { color: #1677ff; }
-.log-fatal { color: #ff7875; font-weight: 600; }
-.log-unknown { color: #9aa4af; }
+.log-line:hover { background: rgba(255, 255, 255, 0.035); }
 
-/* 结构化日志面板：时间戳 / 级别标签 / 消息 / 关键字高亮 / 换行切换 */
-.log-ts { color: #6b7280; margin-right: 8px; }
+/* 时间戳：低调灰 */
+.log-ts { color: #5b6573; margin-right: 8px; }
+
+/* 级别徽章（frpc 风格彩色 pill） */
 .log-lvl {
   display: inline-block;
-  min-width: 44px;
+  min-width: 46px;
   margin-right: 8px;
-  font-weight: 600;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-align: center;
   text-transform: uppercase;
-  opacity: 0.9;
 }
-.log-src { color: #6b7280; font-style: italic; margin-right: 6px; }
-.log-msg { color: #d1d5db; }
-.log-line.log-daemon { opacity: 0.85; font-style: italic; }
-.log-hl { background: #fadb14; color: #1f1f1f; border-radius: 2px; padding: 0 1px; }
+.log-lvl.lv-debug   { color: #7cc4ff; background: rgba(124, 196, 255, 0.12); }
+.log-lvl.lv-info    { color: #4ade80; background: rgba(74, 222, 128, 0.12); }
+.log-lvl.lv-warn    { color: #fbbf24; background: rgba(251, 191, 36, 0.15); }
+.log-lvl.lv-error   { color: #f87171; background: rgba(248, 113, 113, 0.15); }
+.log-lvl.lv-fatal   { color: #fb7185; background: rgba(251, 113, 133, 0.20); }
+.log-lvl.lv-unknown { color: #6b7280; background: rgba(107, 114, 128, 0.10); }
+
+/* 消息：默认浅灰；warn/error/fatal 整行着色更醒目 */
+.log-msg { color: #cbd5e1; }
+.log-line.lv-warn  .log-msg { color: #fcd9a3; }
+.log-line.lv-error .log-msg { color: #fca5a5; }
+.log-line.lv-fatal .log-msg { color: #fda4af; font-weight: 600; }
+.log-line.lv-unknown .log-msg { color: #9aa4af; }
+
+/* 左侧彩条强调高级别行 */
+.log-line.lv-warn  { border-left-color: rgba(251, 191, 36, 0.6); }
+.log-line.lv-error { border-left-color: rgba(248, 113, 113, 0.7); }
+.log-line.lv-fatal { border-left-color: rgba(251, 113, 133, 0.85); }
+
+/* 守护进程注入的合成行（如进程退出）：偏蓝、斜体 */
+.log-line.log-daemon { font-style: italic; }
+.log-line.log-daemon .log-msg { color: #93c5fd; }
+
+.log-hl { background: #fde047; color: #1f1f1f; border-radius: 2px; padding: 0 1px; }
 .log-line.nowrap { white-space: pre; word-break: normal; overflow-x: hidden; }
+
+/* 兼容旧调用点（按整行着色的简单日志） */
+.log-info { color: #4ade80; }
+.log-warn { color: #fbbf24; }
+.log-error { color: #f87171; }
+.log-debug { color: #7cc4ff; }
