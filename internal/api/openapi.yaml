@@ -580,10 +580,59 @@ paths:
       - { name: token, in: query, required: false, schema: { type: string }, description: WebSocket 鉴权令牌 }
     get:
       tags: [logs]
-      summary: 实时跟踪日志（WebSocket 升级）
-      description: "升级为 WebSocket；每帧为 JSON `{\"line\":\"<日志行>\"}`。"
+      summary: 实时跟踪日志（WebSocket 升级，原始文本行）
+      description: "升级为 WebSocket；每帧为 JSON `{\"line\":\"<日志行>\"}`。结构化日志请用 /logs/stream。"
       responses:
         "101": { description: 协议切换为 WebSocket }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/configs/{id}/logs/stream:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: token, in: query, required: false, schema: { type: string }, description: WebSocket 鉴权令牌 }
+      - { name: level, in: query, required: false, schema: { type: string, enum: [debug, info, warn, error, fatal] }, description: 最低级别过滤 }
+      - { name: keyword, in: query, required: false, schema: { type: string }, description: 子串过滤（匹配 message+raw，大小写不敏感） }
+      - { name: conn_index, in: query, required: false, schema: { type: integer }, description: 仅某条 edge 连接的日志 }
+      - { name: backlog, in: query, required: false, schema: { type: integer, default: 500 }, description: 连接时回放的历史行数 }
+    get:
+      tags: [logs]
+      summary: 结构化实时日志流（WebSocket 升级）
+      description: |
+        升级为 WebSocket，订阅子进程结构化日志。每帧为 JSON `{"entries":[LogEntry,...]}`：
+        连接时先发一帧历史（按 backlog + 过滤 + 清空水位），之后每条新行一帧（长度 1）。
+        前端按 `seq` 去重（订阅先于快照，边界可能出现一条重复）。
+      responses:
+        "101": { description: "协议切换为 WebSocket（每帧为 entries 数组）" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/configs/{id}/live:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [metrics]
+      summary: 实例实时状态（按需抓取 cloudflared /metrics，不落库）
+      description: "未运行或抓取失败时以 200 + running=false 返回（calm 状态，非错误）。"
+      responses:
+        "200":
+          description: 实时状态
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LiveStatus" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/configs/{id}/projection:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [configs]
+      summary: 运行参数投影（cfdflags 投影出的真实 TUNNEL_* env / argv）
+      description: "展示该实例实际以什么参数运行。TUNNEL_TOKEN 始终脱敏，绝不回明文。"
+      responses:
+        "200":
+          description: 投影结果
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Projection" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v1/events:
@@ -1098,6 +1147,61 @@ components:
         resolved_at: { type: integer, format: int64, description: 0 表示仍在触发 }
         value: { type: number }
         state: { type: string, enum: [firing, resolved] }
+
+    LogEntry:
+      type: object
+      description: "结构化日志条目（WS /logs/stream 的帧元素，snake_case）。"
+      properties:
+        seq: { type: integer, format: int64, description: 单调递增序号，前端按此去重 }
+        time: { type: string, format: date-time }
+        level: { type: string, enum: [debug, info, warn, error, fatal, unknown] }
+        message: { type: string }
+        event: { type: integer, description: cloudflared event 码（可选）}
+        conn_index: { type: integer, description: 关联的 edge 连接号（可选）}
+        tunnel_id: { type: string }
+        raw: { type: string, description: 原始行（JSON 解析失败时等于整行）}
+        fields: { type: object, additionalProperties: true, description: 解析出的完整 JSON 字段 }
+        source: { type: string, enum: [stderr, stdout, stream, daemon] }
+
+    EdgeConnection:
+      type: object
+      description: 一条 cloudflared↔边缘连接的实时统计（按 conn_index）
+      properties:
+        conn_index: { type: integer }
+        location: { type: string, description: 边缘数据中心三字码（colo），可缺 }
+        rtt: { type: number, description: smoothed RTT（cloudflared 原生单位，UI 仅标 RTT 不臆断单位）}
+        lost_packets: { type: number }
+
+    LiveStatus:
+      type: object
+      description: "GET /configs/{id}/live 的按需抓取结果（不落库，snake_case）。未运行时仅 running=false。"
+      properties:
+        running: { type: boolean }
+        scraped_at: { type: integer, format: int64, description: unix 秒 }
+        ha_connections: { type: integer }
+        requests_total: { type: integer, format: int64 }
+        request_errors: { type: integer, format: int64 }
+        response_5xx: { type: integer, format: int64 }
+        goroutines: { type: integer }
+        resident_memory_bytes: { type: integer, format: int64 }
+        version: { type: string, description: cloudflared build_info 版本，可缺 }
+        protocol: { type: string, enum: [quic, http2, unknown] }
+        connections:
+          type: array
+          items: { $ref: "#/components/schemas/EdgeConnection" }
+        error: { type: string, description: 抓取失败原因（running=false 时可有）}
+
+    Projection:
+      type: object
+      description: "GET /configs/{id}/projection；cfdflags 投影出的真实运行参数。TUNNEL_TOKEN 已脱敏。"
+      properties:
+        env:
+          type: object
+          additionalProperties: { type: string }
+          description: 投影出的 TUNNEL_* 环境变量（含脱敏 TUNNEL_TOKEN）
+        argv: { type: array, items: { type: string } }
+        binary_version: { type: string }
+        binary_path: { type: string }
 
     Event:
       type: object

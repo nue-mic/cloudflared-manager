@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -124,7 +123,7 @@ func (s *Sampler) tick() {
 		if !ok {
 			continue
 		}
-		samples, err := s.scrape(addr)
+		samples, err := Scrape(addr)
 		if err != nil {
 			s.log.Debug("metrics scrape failed", slog.String("id", id), slog.Any("err", err))
 			continue
@@ -143,28 +142,6 @@ func (s *Sampler) tick() {
 			s.log.Warn("insert traffic failed", slog.Any("err", err))
 		}
 	}
-}
-
-// scrape fetches /metrics from addr and decodes it.
-func (s *Sampler) scrape(addr string) ([]Sample, error) {
-	url := "http://" + addr + "/metrics"
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("scrape %s: status %d", url, resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return nil, err
-	}
-	return ParsePromText(string(body)), nil
 }
 
 // toPoints folds the spec §5.2 "minimum 12" metrics into TrafficPoint

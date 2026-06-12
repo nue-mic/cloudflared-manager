@@ -453,6 +453,56 @@ cloudflared 没有 per-tunnel 字节计数器，只暴露 Prometheus 指标。`G
 
 早于 `log_view_since` 水位的行被丢弃。
 
+### 7.5 `WS /api/v1/configs/{id}/logs/stream` — 结构化实时日志流 ⭐
+
+升级为 WebSocket（浏览器用 `?token=...`）。相比 `logs/tail` 推原始字符串，本端点推**结构化条目**，前端据此做级别着色 / 过滤 / 去重。可选过滤参数：`?level=`（最低级别 debug|info|warn|error|fatal）、`?keyword=`（子串，匹配 message+raw，大小写不敏感）、`?conn_index=`（仅某条 edge 连接）、`?backlog=`（连接时回放历史行数，默认 500）。
+
+每帧统一为 `{ "entries": [LogEntry, ...] }`：连接时先发一帧历史（按 backlog + 过滤 + 清空水位），之后每条新行一帧（长度 1）。**前端按 `seq` 去重**（服务端订阅先于快照，边界可能出现一条重复）。
+
+`LogEntry`（**snake_case**，来源 [`logtail.Entry`](../internal/logtail/process_tailer.go)）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `seq` | uint64 | 单调递增序号，前端去重键 |
+| `time` | string | RFC3339 |
+| `level` | string | debug \| info \| warn \| error \| fatal \| unknown |
+| `message` | string | 解析出的消息（非 JSON 行等于整行） |
+| `event` | int? | cloudflared event 码 |
+| `conn_index` | int? | 关联 edge 连接号 |
+| `tunnel_id` | string? | |
+| `raw` | string | 原始行 |
+| `fields` | object? | 解析出的完整 JSON 字段（供"展开 JSON"） |
+| `source` | string | stderr \| stdout \| stream \| daemon |
+
+### 7.6 `GET /api/v1/configs/{id}/live` — 实例实时状态（按需抓取，不落库）
+
+按需抓取该实例 cloudflared `/metrics` 并解析，**不写时序库**。未运行或抓取失败时以 `200 + {"running": false}` 返回（非错误）。运行中返回 `LiveStatus`（**snake_case**，来源 [`metrics/live.go`](../internal/metrics/live.go)）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `running` | bool | |
+| `scraped_at` | int64 | unix 秒 |
+| `ha_connections` | int | HA 连接数 |
+| `requests_total` / `request_errors` / `response_5xx` | int64 | 累计计数 |
+| `goroutines` / `resident_memory_bytes` | int / int64 | cloudflared 进程指标 |
+| `version` | string? | build_info 版本 |
+| `protocol` | string | quic \| http2 \| unknown |
+| `connections[]` | EdgeConnection | 每条 edge 连接：`conn_index` / `location`(colo) / `rtt`(原生单位) / `lost_packets` |
+| `error` | string? | 抓取失败原因（running=false 时可有） |
+
+### 7.7 `GET /api/v1/configs/{id}/projection` — 运行参数投影
+
+返回 cfdflags 把当前 YAML 投影出的真实运行参数，让用户看懂"到底用什么参数在跑"。**`TUNNEL_TOKEN` 始终脱敏（首4…末4），绝不回明文。**
+
+```jsonc
+{
+  "env": { "TUNNEL_TRANSPORT_PROTOCOL": "auto", "TUNNEL_TOKEN": "eyJh…AB12", "NO_AUTOUPDATE": "true", "TUNNEL_OUTPUT": "json" },
+  "argv": ["tunnel", "--no-autoupdate", "run"],
+  "binary_version": "2026.5.2",
+  "binary_path": "/var/lib/cfdmgrd/bin/cloudflared/2026.5.2/cloudflared"
+}
+```
+
 ---
 
 ## 8. 事件总线（WebSocket）
