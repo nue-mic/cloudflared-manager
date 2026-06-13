@@ -10,6 +10,7 @@ import (
 
 	"github.com/mia-clark/cloudflared-manager/internal/api/middleware"
 	"github.com/mia-clark/cloudflared-manager/internal/appcfg"
+	"github.com/mia-clark/cloudflared-manager/internal/cfaccount"
 	"github.com/mia-clark/cloudflared-manager/internal/cfdbin"
 	"github.com/mia-clark/cloudflared-manager/internal/manager"
 	"github.com/mia-clark/cloudflared-manager/internal/metrics"
@@ -24,6 +25,7 @@ type Deps struct {
 	Metrics          *metrics.Store     // may be nil if metrics disabled
 	BinaryStore      *cfdbin.Store      // may be nil; binaries endpoints degrade gracefully
 	BinaryDownloader *cfdbin.Downloader // may be nil; binaries endpoints degrade gracefully
+	CFAccounts       *cfaccount.Store   // Cloudflare account/binding store (CF integration)
 }
 
 // NewRouter assembles the chi mux with all middleware and route groups
@@ -63,6 +65,7 @@ func NewRouter(d Deps) http.Handler {
 	mh := NewMetricsHandler(d.Metrics)
 	upd := NewUpdateHandler(d.Cfg.DataDir, d.Cfg.SelfUpdateEnabled, d.Logger)
 	binaries := NewBinariesHandler(d.BinaryStore, d.BinaryDownloader, d.Cfg.CloudflaredDefaultVersion, d.Logger)
+	cf := NewCFHandler(d.CFAccounts, d.Manager, d.Logger)
 
 	// Authenticated subtree.
 	r.Group(func(r chi.Router) {
@@ -136,6 +139,12 @@ func NewRouter(d Deps) http.Handler {
 		r.Post("/api/v1/binaries/install", binaries.Install)
 		r.Post("/api/v1/binaries/{version}/activate", binaries.Activate)
 		r.Delete("/api/v1/binaries/{version}", binaries.Delete)
+
+		// ── Cloudflare 账号直连集成 ──────────────────────────────────────
+		// 仅当账号存储就绪时注册，避免存储禁用时空指针。
+		if d.CFAccounts != nil {
+			registerCFRoutes(r, cf)
+		}
 	})
 
 	// WebUI 静态文件分发 & SPA 路由兼容

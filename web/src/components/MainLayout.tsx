@@ -14,6 +14,8 @@ import {
   InfoCircleOutlined,
   CloudDownloadOutlined,
   ReadOutlined,
+  CloudOutlined,
+  GlobalOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
@@ -112,6 +114,15 @@ const MainLayout: React.FC = () => {
         ],
       },
       {
+        key: 'g-cloudflare',
+        type: 'group',
+        label: 'Cloudflare',
+        children: [
+          { key: '/cf/accounts', icon: <CloudOutlined />, label: 'Cloudflare 账号' },
+          { key: '/cf/console', icon: <GlobalOutlined />, label: '隧道后台' },
+        ],
+      },
+      {
         key: 'g-host',
         type: 'group',
         label: '主机',
@@ -146,7 +157,7 @@ const MainLayout: React.FC = () => {
   // 根据 path 选中：取首段或两段做匹配
   const selectedKey = useMemo(() => {
     const p = location.pathname;
-    const candidates = ['/tools/reference', '/tools/validate', '/import-export', '/binaries'];
+    const candidates = ['/tools/reference', '/tools/validate', '/import-export', '/binaries', '/cf/accounts', '/cf/console'];
     for (const c of candidates) if (p.startsWith(c)) return c;
     const seg = '/' + p.split('/').filter(Boolean)[0];
     return seg || '/dashboard';

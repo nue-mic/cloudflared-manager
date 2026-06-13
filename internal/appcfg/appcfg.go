@@ -18,8 +18,14 @@ type Config struct {
 	LogsDir     string
 	StoresDir   string
 	MetaFile    string
-	LogLevel    string
-	DocsEnabled bool
+	// CFStoreFile holds Cloudflare accounts + instance bindings (secrets
+	// encrypted at rest). Defaults to {DataDir}/cf-store.json.
+	CFStoreFile string
+	// SecretKeyFile is the data-encryption key for cf-store secrets,
+	// auto-generated on first use. Defaults to {DataDir}/secret.key.
+	SecretKeyFile string
+	LogLevel      string
+	DocsEnabled   bool
 	// SelfUpdateEnabled gates the web-triggered self-update endpoint
 	// (POST /api/v1/system/update). It maps to CFDM_SELF_UPDATE_ENABLED
 	// and defaults to true. Operators running immutable deployments can set
@@ -61,8 +67,8 @@ func Load() (*Config, error) {
 
 		SelfUpdateEnabled: parseBool(getEnv("CFDM_SELF_UPDATE_ENABLED", "true"), true),
 
-		DownloadMirrors:           splitCSV(getEnv("CFDM_DOWNLOAD_MIRRORS", "https://gh-proxy.org/,https://gh-proxy.com/")),
-		GitHubToken:               os.Getenv("CFDM_GITHUB_TOKEN"),
+		DownloadMirrors: splitCSV(getEnv("CFDM_DOWNLOAD_MIRRORS", "https://gh-proxy.org/,https://gh-proxy.com/")),
+		GitHubToken:     os.Getenv("CFDM_GITHUB_TOKEN"),
 		ReleaseProxyBases: splitCSV(getEnv("CFDM_RELEASE_PROXY_BASES",
 			"https://gh-raw.966788.xyz,https://gh-raw.988669.xyz,https://gh-raw.s03.qzz.io,https://gh-raw.s04.qzz.io,https://gh-raw.s05.qzz.io,https://gh-raw.s06.qzz.io,https://gh-raw.s07.qzz.io")),
 		ReleaseProxyKey:           getEnv("CFDM_RELEASE_PROXY_KEY", "cloudflared-releases"),
@@ -73,6 +79,8 @@ func Load() (*Config, error) {
 	cfg.LogsDir = cfg.DataDir + "/logs"
 	cfg.StoresDir = cfg.DataDir + "/stores"
 	cfg.MetaFile = cfg.DataDir + "/meta.json"
+	cfg.CFStoreFile = cfg.DataDir + "/cf-store.json"
+	cfg.SecretKeyFile = cfg.DataDir + "/secret.key"
 	cfg.BinariesDir = getEnv("CFDM_BINARIES_DIR", cfg.DataDir+"/bin/cloudflared")
 
 	if cfg.APIToken == "" {

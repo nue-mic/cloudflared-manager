@@ -182,3 +182,15 @@ curl -H "Authorization: Bearer $GH_MIA_CLARK_TOKEN" https://api.github.com/repos
 - token 明文绝不进 commit message / PR body / 公开聊天 / 截图 / 任何 push 到远端的内容（否则 GitHub secret-scanning 立即吊销）
 - `.gitignore` 已含 `.claude.local/` 与 `.claude/secrets/`，新建 token 文件请放在这两个目录之一
 - 若 token 失效：要求用户重发，不要把无效 token 留在历史里
+
+## 12. Cloudflare 账号直连集成（CF Integration）
+
+在「token 模式跑进程」之上叠加的一层「直连 Cloudflare 官方 API、本地复刻隧道后台」能力。权威设计见 [docs/CF-集成设计.zh-CN.md](docs/CF-集成设计.zh-CN.md)，字段表见 [docs/API.zh-CN.md](docs/API.zh-CN.md) 的「Cloudflare 账号直连集成」节。
+
+- **新增包**：
+  - `internal/cfapi`：纯 Cloudflare API 客户端（无存储）。两种认证（API Token / 邮箱+Global Key）、envelope 解析、`DecodeTunnelToken`（base64(JSON{a,t,s}) → account_tag/tunnel_id，**本地解码做归属校验**）、cfd_tunnel CRUD、configurations(ingress)、connections、zones、DNS records。
+  - `internal/cfaccount`：账号 + 实例绑定的**加密存储**。AES-256-GCM，DEK 在 `$DATA_DIR/secret.key`（首次自动生成 0600），文件 `$DATA_DIR/cf-store.json`（0600）。secret 永不回传；加载时自动加密迁移旧明文。
+  - `internal/api/cf_*.go`：`cf.go`(共享 + `registerCFRoutes`)、`cf_accounts.go`、`cf_tunnels.go`、`cf_dns.go`、`cf_link.go`(绑定 + 公共主机名聚合)。
+- **连线**：`appcfg.Config` 加 `CFStoreFile`/`SecretKeyFile`；`main.go` 建 `cfaccount.Store` 注入 `api.Deps.CFAccounts`，并订阅 eventbus `config.deleted` 清理绑定；store 为 nil 时整段路由不注册（降级）。
+- **大小写坑（接 §6）**：账号视图/隧道/zone/DNS/绑定外层 = **snake_case**；隧道「配置」子树（`ingress[]`、`originRequest`）= cloudflared 原生 **camelCase**（`noTLSVerify`/`httpHostHeader`/`http2Origin`/`access.{required,teamName,audTag[]}` …），`originRequest` 后端用 `map[string]any` 原样直传，写错 key 不报错但不生效；`warp-routing` 含连字符。
+- **前端**：`web/src/api/{client.ts(cfApi),types.ts(CF*)}`（手写契约，未走 schema.d.ts）；页面 `pages/CFAccounts.tsx`、`pages/CFConsole.tsx`、组件 `components/instance/InstanceCFPanel.tsx`。改这些前端文件前同样遵守 `web-api-binding` 纪律。

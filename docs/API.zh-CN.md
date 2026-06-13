@@ -787,3 +787,107 @@ curl -s -X POST $BASE/api/v1/binaries/2026.5.2/activate -H "Authorization: Beare
 # ws://localhost:8080/api/v1/events?token=dev
 # ws://localhost:8080/api/v1/configs/demo/logs/tail?token=dev
 ```
+
+---
+
+## Cloudflare 账号直连集成（cloudflare）
+
+> 在本地复刻 Cloudflare 隧道官方后台：配置一个或多个 Cloudflare 账号（API Token 或
+> 邮箱+Global Key），自动探测 `account_id`；把本地实例「关联」到远端隧道（带归属校验）；
+> 关联后直连官方 API 管理远端隧道、公共主机名（ingress + DNS 代理 CNAME）、连接器、DNS 记录。
+> 权威实现见 `internal/cfapi`、`internal/cfaccount`、`internal/api/cf_*.go`；详尽设计见
+> [CF-集成设计.zh-CN.md](CF-集成设计.zh-CN.md)。
+
+### 命名分界（务必先看）
+- **账号视图 / 隧道 / zone / DNS / 绑定 / 公共主机名外层**：`snake_case`
+  （`account_id` / `has_token` / `tunnel_id` / `account_tag` …）。
+- **隧道「配置」子树**：`ingress[]` 规则与 `originRequest` 连接参数走 cloudflared 原生
+  `camelCase`（`noTLSVerify` / `httpHostHeader` / `connectTimeout` / `originServerName` /
+  `http2Origin` / `keepAliveConnections` / `access.{required,teamName,audTag[]}` …），
+  本项目原样直传 Cloudflare，**写错大小写不报错但不生效**。
+- `warp-routing` 这个 key 含连字符，注意按字面写。
+
+### 安全
+- secret（API Token / Global Key）**AES-256-GCM 加密落盘**（DEK 在 `$DATA_DIR/secret.key`，
+  首次自动生成 0600），任何响应都**不回传**；仅 `has_token` / `has_key` 标志。
+- 账号/绑定存于 `$DATA_DIR/cf-store.json`（原子写、0600）。
+- 旧明文 secret 在加载时**自动加密迁移**。
+
+### 账号
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/cf/accounts` | 列出账号（脱敏） |
+| POST | `/cf/accounts` | 新建并自动校验+探测 `account_id` |
+| GET | `/cf/accounts/{aid}` | 详情（脱敏） |
+| PATCH | `/cf/accounts/{aid}` | 改名/换凭证（空 secret = 保留）并重校验 |
+| DELETE | `/cf/accounts/{aid}` | 删除 |
+| POST | `/cf/accounts/{aid}/verify` | 重新校验 |
+| GET | `/cf/accounts/{aid}/cf-accounts` | 该凭证可见的 CF 账号（多账号选 account_id） |
+
+新建入参 `CFAccountInput`：`{name, auth_type:"token"|"key", token?, email?, api_key?, account_id?}`。
+响应 `CFAccountResp`：`{account: CFAccountView, verify: {ok, error?, accounts?:[{id,name,type}]}}`。
+- `account_id` 自动探测规则：凭证仅可见 1 个 CF 账号时自动选定；多于 1 个则 `account_id=""`，
+  由前端从 `verify.accounts` 选一个再 PATCH 落定。
+- `status`：`unverified` / `active` / `invalid`。
+
+`CFAccountView`：`{id,name,auth_type,account_id,account_name,email,has_token,has_key,status,
+last_verified_at,created_at,updated_at}`。
+
+### 远端隧道 / 配置 / 连接（经账号代理）
+| 方法 | 路径 |
+|---|---|
+| GET / POST | `/cf/accounts/{aid}/tunnels` |
+| GET / PATCH / DELETE | `/cf/accounts/{aid}/tunnels/{tid}` |
+| GET | `/cf/accounts/{aid}/tunnels/{tid}/token`（敏感，按需取） |
+| GET / PUT | `/cf/accounts/{aid}/tunnels/{tid}/configurations` |
+| GET / DELETE | `/cf/accounts/{aid}/tunnels/{tid}/connections`（DELETE `?client_id=` 省略=全清） |
+
+- 账号未确定 `account_id`（未校验/多账号未选）时，隧道类接口返回 **409**。
+- `PUT configurations` 入参 `{config: CFTunnelConfig}`，**整体替换**（CF 不支持增量）；
+  `config.ingress` 最后一条须为兜底 `{service:"http_status:404"}`。
+
+### zones / DNS 记录
+| 方法 | 路径 |
+|---|---|
+| GET | `/cf/accounts/{aid}/zones?name=` |
+| GET / POST | `/cf/accounts/{aid}/zones/{zid}/dns_records?name=` |
+| PUT / DELETE | `/cf/accounts/{aid}/zones/{zid}/dns_records/{rid}` |
+
+隧道公共主机名对应的 DNS 记录形如
+`{type:"CNAME", name:"app.example.com", content:"<tunnel_id>.cfargotunnel.com", proxied:true, ttl:1}`。
+
+### 实例绑定 + 公共主机名聚合（复刻后台核心）
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/configs/{id}/cf/token-info` | 解码本地 token → `{has_token,account_tag,tunnel_id,error?}` |
+| GET | `/configs/{id}/cf/binding` | 当前绑定 + 远端隧道概要 + `match` |
+| PUT | `/configs/{id}/cf/binding` | `{account_id, tunnel_id?}`，做**归属校验** |
+| DELETE | `/configs/{id}/cf/binding` | 解绑 |
+| GET | `/configs/{id}/cf/public-hostnames` | 聚合 ingress + 各自 DNS 状态 |
+| POST | `/configs/{id}/cf/public-hostnames` | 增：插 ingress + 建/改代理 CNAME |
+| PUT | `/configs/{id}/cf/public-hostnames/{index}` | 改第 index 条（+DNS 同步） |
+| DELETE | `/configs/{id}/cf/public-hostnames/{index}` | 删（`?delete_dns=true` 同删 CNAME） |
+
+- **归属校验**：PUT binding 时，`tunnel_id` 缺省取 token 解码值；后端 `GetTunnel(account_id, tunnel_id)`
+  确认隧道存在且未删除，否则 **400「该隧道不属于此账号」**。响应 `match` 表示 token 解出的
+  `tunnel_id` 与绑定是否一致。
+- 公共主机名增删改入参 `CFPublicHostnameInput`：
+  `{hostname, service, path?, origin_request?:{...camelCase...}, manage_dns?:true}`。
+- DNS 富集/同步为**尽力而为**：token 缺 DNS/zone 权限时，列表返回顶层 `dns_error`，主体仍可用。
+
+### curl 速览
+```bash
+# 1) 新建 token 账号（自动探测 account_id）
+curl -s -X POST $BASE/api/v1/cf/accounts -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"主账号","auth_type":"token","token":"<CF_API_TOKEN>"}'
+
+# 2) 关联本地实例 demo（缺 tunnel_id 时用 token 解码值，自动归属校验）
+curl -s -X PUT $BASE/api/v1/configs/demo/cf/binding -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"account_id":"acc_xxx"}'
+
+# 3) 给 demo 加一个公共主机名（自动建代理 CNAME）
+curl -s -X POST $BASE/api/v1/configs/demo/cf/public-hostnames -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"hostname":"app.example.com","service":"http://localhost:8080","origin_request":{"noTLSVerify":true}}'
+```

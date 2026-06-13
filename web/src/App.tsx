@@ -16,6 +16,8 @@ const ToolsValidate = lazy(() => import('./pages/ToolsValidate'));
 const ConfigReference = lazy(() => import('./pages/ConfigReference'));
 const Settings = lazy(() => import('./pages/Settings'));
 const About = lazy(() => import('./pages/About'));
+const CFAccounts = lazy(() => import('./pages/CFAccounts'));
+const CFConsole = lazy(() => import('./pages/CFConsole'));
 
 const PageFallback = (
   <div
@@ -50,6 +52,11 @@ function App() {
               <Route index element={<Navigate to="/tools/validate" replace />} />
               <Route path="validate" element={<ToolsValidate />} />
               <Route path="reference" element={<ConfigReference />} />
+            </Route>
+            <Route path="cf">
+              <Route index element={<Navigate to="/cf/accounts" replace />} />
+              <Route path="accounts" element={<CFAccounts />} />
+              <Route path="console" element={<CFConsole />} />
             </Route>
             <Route path="import-export" element={<ImportExport />} />
             <Route path="settings" element={<Settings />} />

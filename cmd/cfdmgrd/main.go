@@ -16,6 +16,7 @@ import (
 
 	"github.com/mia-clark/cloudflared-manager/internal/api"
 	"github.com/mia-clark/cloudflared-manager/internal/appcfg"
+	"github.com/mia-clark/cloudflared-manager/internal/cfaccount"
 	"github.com/mia-clark/cloudflared-manager/internal/cfdbin"
 	"github.com/mia-clark/cloudflared-manager/internal/eventbus"
 	"github.com/mia-clark/cloudflared-manager/internal/manager"
@@ -137,6 +138,26 @@ func runServe(args []string) int {
 	mgr.AutoStart()
 	defer mgr.Shutdown()
 
+	// Cloudflare 账号 + 实例绑定存储（密钥 AES-GCM 落盘）。失败不致命：
+	// 仅 CF 集成端点降级（store 为 nil 时 handler 自身不会被命中——路由仍注册，
+	// 但任何 store 操作会 panic，故这里失败则禁用整段集成）。
+	cfStore, err := cfaccount.New(cfg.CFStoreFile, cfg.SecretKeyFile)
+	if err != nil {
+		logger.Warn("cf account store disabled", slog.Any("err", err))
+		cfStore = nil
+	} else {
+		// 实例被删除时清理其 Cloudflare 绑定，避免孤儿绑定被新同名实例继承。
+		sub := bus.Subscribe(&eventbus.Filter{Types: []eventbus.EventType{eventbus.TypeConfigDeleted}}, 16)
+		go func() {
+			for ev := range sub.C() {
+				if ev.ConfigID != "" {
+					_ = cfStore.DeleteBinding(ev.ConfigID)
+				}
+			}
+		}()
+		defer sub.Unsubscribe()
+	}
+
 	// 时序指标存储 + 采样器：纯 Go SQLite，落 $DataDir/metrics.db。
 	// 采样器每 interval 拉取每个运行中实例的 cloudflared --metrics 端点，
 	// 解析 Prometheus 文本，写入 TrafficPoint，并评估告警规则。
@@ -159,6 +180,7 @@ func runServe(args []string) int {
 		Metrics:          mstore,
 		BinaryStore:      binStore,
 		BinaryDownloader: binDl,
+		CFAccounts:       cfStore,
 	})
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

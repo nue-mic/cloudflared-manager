@@ -13,6 +13,7 @@ import {
   GlobalOutlined,
   SettingOutlined,
   HistoryOutlined,
+  CloudOutlined,
 } from '@ant-design/icons';
 import { instanceApi } from '../../api/client';
 import type { Snapshot, LiveStatus } from '../../api/types';
@@ -22,6 +23,7 @@ import InstanceMetrics from './InstanceMetrics';
 import InstanceConnections from './InstanceConnections';
 import InstanceConfigView from './InstanceConfigView';
 import InstanceEvents from './InstanceEvents';
+import InstanceCFPanel from './InstanceCFPanel';
 
 const { Title } = Typography;
 
@@ -120,6 +122,11 @@ export default function InstanceDetailPanel({
       key: 'config',
       label: (<span><SettingOutlined /> 配置</span>),
       children: <InstanceConfigView id={snap.id} />,
+    },
+    {
+      key: 'cloudflare',
+      label: (<span><CloudOutlined /> Cloudflare</span>),
+      children: <InstanceCFPanel id={snap.id} />,
     },
     {
       key: 'events',

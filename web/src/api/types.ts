@@ -241,3 +241,180 @@ export interface AlertRuleList {
 export interface AlertEventList {
   items: AlertEvent[];
 }
+
+// ── Cloudflare 账号直连集成 ──────────────────────────────────────────────────
+// 权威来源：
+//   - internal/cfaccount/types.go (View, snake_case)
+//   - internal/cfapi/types.go     (Account/Tunnel/Zone/DNSRecord… snake_case；
+//                                   TunnelConfig 内 ingress/originRequest 为 camelCase)
+//   - internal/api/cf_*.go        (响应信封)
+//
+// 注意大小写分界：账号视图 / 隧道 / zone / DNS 走 snake_case；隧道「配置」
+// （ingress 规则 + originRequest 连接参数）走 cloudflared 原生 camelCase，原样直传 CF。
+
+export type CFAuthType = 'token' | 'key';
+export type CFAccountStatus = 'unverified' | 'active' | 'invalid';
+
+// 脱敏后的账号视图（secret 永不回传，仅 has_token/has_key）。
+export interface CFAccountView {
+  id: string;
+  name: string;
+  auth_type: CFAuthType;
+  account_id: string;
+  account_name: string;
+  email: string;
+  has_token: boolean;
+  has_key: boolean;
+  status: CFAccountStatus;
+  last_verified_at: string;
+  created_at: string;
+  updated_at: string;
+}
+// GET /accounts 返回的 Cloudflare 账号（用于多账号选择 account_id）。
+export interface CFAccount {
+  id: string;
+  name: string;
+  type?: string;
+}
+export interface CFAccountVerify {
+  ok: boolean;
+  error?: string;
+  accounts?: CFAccount[];
+}
+export interface CFAccountResp {
+  account: CFAccountView;
+  verify: CFAccountVerify;
+}
+export interface CFAccountList {
+  items: CFAccountView[];
+}
+
+// 远端隧道（cfd_tunnel，snake_case）。
+export type CFTunnelStatus = 'inactive' | 'degraded' | 'healthy' | 'down';
+export interface CFTunnel {
+  id: string;
+  account_tag?: string;
+  name: string;
+  created_at?: string;
+  deleted_at?: string;
+  conns_active_at?: string;
+  conns_inactive_at?: string;
+  status?: CFTunnelStatus;
+  tun_type?: string;
+  config_src?: 'local' | 'cloudflare';
+  remote_config?: boolean;
+  connections?: unknown;
+}
+export interface CFTunnelList {
+  items: CFTunnel[];
+}
+
+// 隧道配置（ingress + originRequest，camelCase，原样直传 cloudflared/CF）。
+export type CFOriginRequest = Record<string, unknown>;
+export interface CFIngressRule {
+  hostname?: string;
+  service?: string;
+  path?: string;
+  originRequest?: CFOriginRequest;
+}
+export interface CFTunnelConfig {
+  ingress?: CFIngressRule[];
+  originRequest?: CFOriginRequest;
+  'warp-routing'?: { enabled: boolean };
+}
+export interface CFConfigurationResult {
+  account_id?: string;
+  tunnel_id?: string;
+  version?: number;
+  config: CFTunnelConfig | null;
+  source?: string;
+  created_at?: string;
+}
+
+// 连接器（connections 端点，snake_case）。
+export interface CFConnector {
+  id: string;
+  features?: string[];
+  version?: string;
+  arch?: string;
+  run_at?: string;
+  config_version?: number;
+  conns?: unknown;
+}
+export interface CFConnectorList {
+  items: CFConnector[];
+}
+
+// Zone / DNS 记录（snake_case）。
+export interface CFZone {
+  id: string;
+  name: string;
+  status?: string;
+  paused?: boolean;
+  account: { id: string; name: string };
+}
+export interface CFZoneList {
+  items: CFZone[];
+}
+export interface CFDNSRecord {
+  id?: string;
+  type?: string;
+  name?: string;
+  content?: string;
+  proxied?: boolean;
+  ttl?: number;
+  comment?: string;
+  proxiable?: boolean;
+  created_on?: string;
+  modified_on?: string;
+}
+export interface CFDNSList {
+  items: CFDNSRecord[];
+}
+
+// 实例 token 解码信息（无 secret）。
+export interface CFTokenInfo {
+  has_token: boolean;
+  account_tag?: string;
+  tunnel_id?: string;
+  error?: string;
+}
+
+// 实例↔隧道绑定状态。
+export interface CFBinding {
+  bound: boolean;
+  account_id?: string;
+  account_name?: string;
+  cf_account_id?: string;
+  tunnel_id?: string;
+  tunnel_name?: string;
+  account_tag?: string;
+  token_account_tag?: string;
+  token_tunnel_id?: string;
+  match: boolean;
+  tunnel?: CFTunnel;
+}
+
+// 公共主机名聚合（ingress 规则 + DNS 记录状态）。
+export interface CFDNSStatus {
+  zone_id?: string;
+  zone_name?: string;
+  record_id?: string;
+  content?: string;
+  proxied: boolean;
+  exists: boolean;
+  in_sync: boolean;
+}
+export interface CFPublicHostname {
+  index: number;
+  hostname: string;
+  service: string;
+  path?: string;
+  origin_request?: CFOriginRequest;
+  dns?: CFDNSStatus;
+}
+export interface CFPublicHostnameList {
+  items: CFPublicHostname[];
+  tunnel_id?: string;
+  dns_error?: string;
+}

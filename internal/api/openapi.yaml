@@ -63,6 +63,16 @@ tags:
     description: 配置导入 / 导出
   - name: binaries
     description: cloudflared 二进制版本管理
+  - name: cloudflare
+    description: |
+      Cloudflare 账号直连集成。配置一个或多个 Cloudflare 账号（API Token 或
+      邮箱+Global Key，secret 加密落盘、永不回传），自动探测 account_id；把本地实例
+      「关联」到远端隧道（带归属校验：解码 connector token 得 account_tag/tunnel_id 并
+      调用 GetTunnel 确认归属）；关联后直连官方 API 管理远端隧道、ingress 公共主机名
+      （含 DNS 代理 CNAME 同步）、连接器与 DNS 记录——本地复刻官方隧道后台。
+      命名分界：账号视图 / 隧道 / zone / DNS 走 snake_case；隧道「配置」(ingress 规则 +
+      originRequest 连接参数) 走 cloudflared 原生 camelCase（如 noTLSVerify / httpHostHeader），
+      原样直传 Cloudflare。
 
 paths:
   /api/v1/health:
@@ -979,6 +989,334 @@ paths:
         "404": { $ref: "#/components/responses/NotFound", description: 版本未安装 }
         "409": { $ref: "#/components/responses/Conflict", description: 当前激活版本不可删除 }
 
+  # ── Cloudflare 账号直连集成 ───────────────────────────────────────────────
+  /api/v1/cf/accounts:
+    get:
+      tags: [cloudflare]
+      summary: 列出 Cloudflare 账号（脱敏）
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/CFAccountView" } }
+    post:
+      tags: [cloudflare]
+      summary: 新建账号（自动校验并探测 account_id）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CFAccountInput" }
+      responses:
+        "201":
+          description: 已创建（含校验结果）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CFAccountResp" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /api/v1/cf/accounts/{aid}:
+    parameters:
+      - { name: aid, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [cloudflare]
+      summary: 账号详情（脱敏）
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/CFAccountView" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [cloudflare]
+      summary: 改名 / 换凭证（空 secret = 保留）并重新校验
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CFAccountInput" }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/CFAccountResp" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [cloudflare]
+      summary: 删除账号
+      responses:
+        "204": { description: 已删除 }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/cf/accounts/{aid}/verify:
+    parameters:
+      - { name: aid, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [cloudflare]
+      summary: 重新校验凭证、刷新状态与 account_id
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/CFAccountResp" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/cf/accounts/{aid}/cf-accounts:
+    parameters:
+      - { name: aid, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [cloudflare]
+      summary: 列出该凭证可见的 Cloudflare 账号（多账号选择 account_id）
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/CFAccount" } }
+        "502": { description: Cloudflare 上游错误, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /api/v1/cf/accounts/{aid}/tunnels:
+    parameters:
+      - { name: aid, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [cloudflare]
+      summary: 列出远端隧道
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/CFTunnel" } }
+        "409": { $ref: "#/components/responses/Conflict", description: 账号尚未确定 account_id }
+    post:
+      tags: [cloudflare]
+      summary: 新建远端隧道
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                config_src: { type: string, enum: [cloudflare, local], default: cloudflare }
+      responses:
+        "201": { description: 已创建, content: { application/json: { schema: { $ref: "#/components/schemas/CFTunnel" } } } }
+  /api/v1/cf/accounts/{aid}/tunnels/{tid}:
+    parameters:
+      - { name: aid, in: path, required: true, schema: { type: string } }
+      - { name: tid, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [cloudflare]
+      summary: 获取远端隧道
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/CFTunnel" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [cloudflare]
+      summary: 重命名远端隧道
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [name], properties: { name: { type: string } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/CFTunnel" } } } }
+    delete:
+      tags: [cloudflare]
+      summary: 删除远端隧道
+      responses:
+        "204": { description: 已删除 }
+  /api/v1/cf/accounts/{aid}/tunnels/{tid}/token:
+    parameters:
+      - { name: aid, in: path, required: true, schema: { type: string } }
+      - { name: tid, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [cloudflare]
+      summary: 获取远端隧道 connector token（敏感）
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { token: { type: string } } } } } }
+  /api/v1/cf/accounts/{aid}/tunnels/{tid}/configurations:
+    parameters:
+      - { name: aid, in: path, required: true, schema: { type: string } }
+      - { name: tid, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [cloudflare]
+      summary: 获取隧道远端配置（ingress / originRequest）
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/CFConfigurationResult" } } } }
+    put:
+      tags: [cloudflare]
+      summary: 整体替换隧道配置（CF 仅支持全量替换）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [config]
+              properties:
+                config: { $ref: "#/components/schemas/CFTunnelConfig" }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/CFConfigurationResult" } } } }
+  /api/v1/cf/accounts/{aid}/tunnels/{tid}/connections:
+    parameters:
+      - { name: aid, in: path, required: true, schema: { type: string } }
+      - { name: tid, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [cloudflare]
+      summary: 列出连接器
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/CFConnector" } } } }
+    delete:
+      tags: [cloudflare]
+      summary: 清理连接（client_id 省略=清理全部）
+      parameters:
+        - { name: client_id, in: query, required: false, schema: { type: string } }
+      responses:
+        "204": { description: 已清理 }
+  /api/v1/cf/accounts/{aid}/zones:
+    parameters:
+      - { name: aid, in: path, required: true, schema: { type: string } }
+      - { name: name, in: query, required: false, schema: { type: string }, description: 精确域名过滤 }
+    get:
+      tags: [cloudflare]
+      summary: 列出 DNS zones
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/CFZone" } } } }
+  /api/v1/cf/accounts/{aid}/zones/{zid}/dns_records:
+    parameters:
+      - { name: aid, in: path, required: true, schema: { type: string } }
+      - { name: zid, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [cloudflare]
+      summary: 列出 DNS 记录
+      parameters:
+        - { name: name, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/CFDNSRecord" } } } }
+    post:
+      tags: [cloudflare]
+      summary: 新建 DNS 记录
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CFDNSRecord" }
+      responses:
+        "201": { description: 已创建, content: { application/json: { schema: { $ref: "#/components/schemas/CFDNSRecord" } } } }
+  /api/v1/cf/accounts/{aid}/zones/{zid}/dns_records/{rid}:
+    parameters:
+      - { name: aid, in: path, required: true, schema: { type: string } }
+      - { name: zid, in: path, required: true, schema: { type: string } }
+      - { name: rid, in: path, required: true, schema: { type: string } }
+    put:
+      tags: [cloudflare]
+      summary: 替换 DNS 记录
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CFDNSRecord" }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/CFDNSRecord" } } } }
+    delete:
+      tags: [cloudflare]
+      summary: 删除 DNS 记录
+      responses:
+        "204": { description: 已删除 }
+  /api/v1/configs/{id}/cf/token-info:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [cloudflare]
+      summary: 解码本地实例 token → account_tag / tunnel_id（无 secret）
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CFTokenInfo" }
+  /api/v1/configs/{id}/cf/binding:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [cloudflare]
+      summary: 当前实例↔隧道绑定 + 远端隧道概要
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/CFBinding" } } } }
+    put:
+      tags: [cloudflare]
+      summary: 关联实例到隧道（归属校验）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [account_id]
+              properties:
+                account_id: { type: string, description: 本地 cfaccount id }
+                tunnel_id: { type: string, description: 缺省时用 token 解出的 tunnel_id }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/CFBinding" } } } }
+        "400": { $ref: "#/components/responses/BadRequest", description: 隧道不属于此账号 / 无法确定 tunnel_id }
+    delete:
+      tags: [cloudflare]
+      summary: 解绑
+      responses:
+        "204": { description: 已解绑 }
+  /api/v1/configs/{id}/cf/public-hostnames:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [cloudflare]
+      summary: 聚合实例的公共主机名（ingress + 各自 DNS 状态）
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/CFPublicHostnameList" } } } }
+        "409": { $ref: "#/components/responses/Conflict", description: 实例未关联账号 }
+    post:
+      tags: [cloudflare]
+      summary: 新增公共主机名（插入 ingress + 建/改代理 CNAME）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CFPublicHostnameInput" }
+      responses:
+        "201": { description: 已创建, content: { application/json: { schema: { type: object } } } }
+  /api/v1/configs/{id}/cf/public-hostnames/{index}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: index, in: path, required: true, schema: { type: integer }, description: ingress 规则下标（不能指向兜底规则） }
+    put:
+      tags: [cloudflare]
+      summary: 修改第 index 条公共主机名（含 DNS 同步）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CFPublicHostnameInput" }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object } } } }
+    delete:
+      tags: [cloudflare]
+      summary: 删除第 index 条公共主机名
+      parameters:
+        - { name: delete_dns, in: query, required: false, schema: { type: string, enum: ["true"] }, description: 同时删除代理 CNAME }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object } } } }
+
 components:
   securitySchemes:
     BearerAuth:
@@ -1320,3 +1658,175 @@ components:
         app_name: { type: string, maxLength: 40, description: "品牌名（侧边栏 / 登录页顶部），默认「Cloudflared 隧道管理器」" }
         app_subtitle: { type: string, maxLength: 60, description: "副标题（登录页小字），默认「Cloudflare Tunnel 管理面板」" }
         html_title: { type: string, maxLength: 120, description: "浏览器标签 <title>，默认「Cloudflared 隧道管理器 · Cloudflare Tunnel 管理面板」" }
+
+    # ── Cloudflare 集成 schemas ──────────────────────────────────────────
+    CFAccountInput:
+      type: object
+      description: "新建/更新账号入参。更新时空 secret = 保留原值。"
+      required: [name, auth_type]
+      properties:
+        name: { type: string }
+        auth_type: { type: string, enum: [token, key] }
+        token: { type: string, description: "API Token（auth_type=token）" }
+        email: { type: string, description: "账户邮箱（auth_type=key）" }
+        api_key: { type: string, description: "Global API Key（auth_type=key）" }
+        account_id: { type: string, description: "可选，显式指定 Cloudflare account id；留空自动探测" }
+    CFAccountView:
+      type: object
+      description: "脱敏账号视图（snake_case）。secret 永不回传，仅 has_token/has_key。"
+      properties:
+        id: { type: string, description: 本地账号 id }
+        name: { type: string }
+        auth_type: { type: string, enum: [token, key] }
+        account_id: { type: string, description: Cloudflare account id }
+        account_name: { type: string }
+        email: { type: string }
+        has_token: { type: boolean }
+        has_key: { type: boolean }
+        status: { type: string, enum: [unverified, active, invalid] }
+        last_verified_at: { type: string }
+        created_at: { type: string }
+        updated_at: { type: string }
+    CFAccount:
+      type: object
+      description: "Cloudflare 账号（GET /accounts 元素）"
+      properties:
+        id: { type: string }
+        name: { type: string }
+        type: { type: string }
+    CFAccountVerify:
+      type: object
+      properties:
+        ok: { type: boolean }
+        error: { type: string }
+        accounts: { type: array, items: { $ref: "#/components/schemas/CFAccount" } }
+    CFAccountResp:
+      type: object
+      properties:
+        account: { $ref: "#/components/schemas/CFAccountView" }
+        verify: { $ref: "#/components/schemas/CFAccountVerify" }
+    CFTunnel:
+      type: object
+      description: "远端隧道（cfd_tunnel，snake_case）"
+      properties:
+        id: { type: string }
+        account_tag: { type: string }
+        name: { type: string }
+        created_at: { type: string }
+        deleted_at: { type: string }
+        conns_active_at: { type: string }
+        conns_inactive_at: { type: string }
+        status: { type: string, enum: [inactive, degraded, healthy, down] }
+        tun_type: { type: string }
+        config_src: { type: string, enum: [local, cloudflare] }
+        remote_config: { type: boolean }
+        connections: {}
+    CFIngressRule:
+      type: object
+      description: "ingress 规则（camelCase，原样直传 cloudflared）"
+      properties:
+        hostname: { type: string }
+        service: { type: string, description: "如 http://localhost:8080 / tcp://... / http_status:404" }
+        path: { type: string }
+        originRequest: { type: object, additionalProperties: true, description: "连接参数：connectTimeout/noTLSVerify/httpHostHeader/access{required,teamName,audTag[]}…" }
+    CFTunnelConfig:
+      type: object
+      properties:
+        ingress: { type: array, items: { $ref: "#/components/schemas/CFIngressRule" } }
+        originRequest: { type: object, additionalProperties: true, description: 全局默认连接参数 }
+        warp-routing: { type: object, properties: { enabled: { type: boolean } } }
+    CFConfigurationResult:
+      type: object
+      properties:
+        account_id: { type: string }
+        tunnel_id: { type: string }
+        version: { type: integer }
+        config: { $ref: "#/components/schemas/CFTunnelConfig" }
+        source: { type: string }
+        created_at: { type: string }
+    CFConnector:
+      type: object
+      properties:
+        id: { type: string }
+        features: { type: array, items: { type: string } }
+        version: { type: string }
+        arch: { type: string }
+        run_at: { type: string }
+        config_version: { type: integer }
+        conns: {}
+    CFZone:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        status: { type: string }
+        paused: { type: boolean }
+        account: { type: object, properties: { id: { type: string }, name: { type: string } } }
+    CFDNSRecord:
+      type: object
+      properties:
+        id: { type: string }
+        type: { type: string, description: "CNAME / A / TXT …（隧道公共主机名用 CNAME）" }
+        name: { type: string }
+        content: { type: string, description: "隧道 CNAME 指向 <tunnel_id>.cfargotunnel.com" }
+        proxied: { type: boolean }
+        ttl: { type: integer, description: "1 = 自动" }
+        comment: { type: string }
+        proxiable: { type: boolean }
+        created_on: { type: string }
+        modified_on: { type: string }
+    CFTokenInfo:
+      type: object
+      properties:
+        has_token: { type: boolean }
+        account_tag: { type: string }
+        tunnel_id: { type: string }
+        error: { type: string }
+    CFBinding:
+      type: object
+      properties:
+        bound: { type: boolean }
+        account_id: { type: string }
+        account_name: { type: string }
+        cf_account_id: { type: string }
+        tunnel_id: { type: string }
+        tunnel_name: { type: string }
+        account_tag: { type: string }
+        token_account_tag: { type: string }
+        token_tunnel_id: { type: string }
+        match: { type: boolean, description: "token 解出的 tunnel_id 是否与绑定一致" }
+        tunnel: { $ref: "#/components/schemas/CFTunnel" }
+    CFDNSStatus:
+      type: object
+      properties:
+        zone_id: { type: string }
+        zone_name: { type: string }
+        record_id: { type: string }
+        content: { type: string }
+        proxied: { type: boolean }
+        exists: { type: boolean }
+        in_sync: { type: boolean }
+    CFPublicHostname:
+      type: object
+      properties:
+        index: { type: integer }
+        hostname: { type: string }
+        service: { type: string }
+        path: { type: string }
+        origin_request: { type: object, additionalProperties: true }
+        dns: { $ref: "#/components/schemas/CFDNSStatus" }
+    CFPublicHostnameList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/CFPublicHostname" } }
+        tunnel_id: { type: string }
+        dns_error: { type: string, description: "DNS 富集为尽力而为；权限/zone 缺失时此处给出原因，不影响主体返回" }
+    CFPublicHostnameInput:
+      type: object
+      required: [hostname, service]
+      properties:
+        hostname: { type: string }
+        service: { type: string }
+        path: { type: string }
+        origin_request: { type: object, additionalProperties: true }
+        manage_dns: { type: boolean, default: true, description: "是否自动同步代理 CNAME" }
