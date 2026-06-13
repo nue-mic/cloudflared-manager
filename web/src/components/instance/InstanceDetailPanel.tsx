@@ -57,8 +57,9 @@ function statusBadge(snap: Snapshot, live: LiveStatus | null): { status: BadgeSt
 
 /**
  * InstanceDetailPanel —— 实例右侧详情面板。顶部双层状态徽章 + 常驻操作条，下方
- * 6 个 Tab（总览/日志/指标/连接/配置/事件）。集中托管 /live 拉取（供徽章/总览/
- * 连接共用），运行中每 5s 轮询。各 Tab 内容按需懒挂载（antd Tabs 默认行为）。
+ * 6 个 Tab（总览/日志/指标·连接/配置/Cloudflare/事件）。「指标·连接」合并实时连接
+ * 与历史指标两块。集中托管 /live 拉取（供徽章/总览/连接共用），运行中每 5s 轮询。
+ * 各 Tab 内容按需懒挂载（antd Tabs 默认行为）。
  */
 export default function InstanceDetailPanel({
   snap,
@@ -109,14 +110,24 @@ export default function InstanceDetailPanel({
       children: <InstanceLogPanel id={snap.id} height="calc(100vh - 300px)" />,
     },
     {
-      key: 'metrics',
-      label: (<span><LineChartOutlined /> 指标</span>),
-      children: <InstanceMetrics id={snap.id} running={running} />,
-    },
-    {
-      key: 'conns',
-      label: (<span><GlobalOutlined /> 连接</span>),
-      children: <InstanceConnections live={live} running={running} />,
+      key: 'runtime',
+      label: (<span><LineChartOutlined /> 指标 · 连接</span>),
+      children: (
+        <Space direction="vertical" size={18} style={{ width: '100%' }}>
+          <div>
+            <Title level={5} style={{ marginTop: 0, marginBottom: 12 }}>
+              <GlobalOutlined /> 实时连接
+            </Title>
+            <InstanceConnections live={live} running={running} />
+          </div>
+          <div>
+            <Title level={5} style={{ marginBottom: 12 }}>
+              <LineChartOutlined /> 历史指标
+            </Title>
+            <InstanceMetrics id={snap.id} running={running} />
+          </div>
+        </Space>
+      ),
     },
     {
       key: 'config',

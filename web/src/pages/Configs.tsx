@@ -57,6 +57,36 @@ function configToYaml(cfg: TunnelConfigV1): string {
   }
 }
 
+// 编辑器顶部的「字段 + 官方支持取值」参考注释。纯 YAML 注释，保存时被 parseYaml
+// 自然丢弃（零副作用），仅作编辑/新建时的速查与复制粘贴。取值口径与后端
+// pkg/cfdconfig 校验逐字一致（validProtocols / validEdgeIPVersions / validRegions /
+// validLogLevels / retries[0,20] / gracePeriod[1s,5m]）。
+const YAML_HINT = `# ── cloudflared 隧道配置参考（token 请填上方字段，勿写在此处）──
+# 仅 token 模式：ingress / 公共主机名 / origin 在「Cloudflare」菜单或官方后台管理。
+# 以下为全部可选字段与官方支持取值，可按需复制粘贴；留空即用 cloudflared 默认值。
+#
+# edge:                       # 与 Cloudflare 边缘的连接方式
+#   protocol: auto            # 协议类型。可选: auto(默认,优先 QUIC,失败回退 http2) | quic | http2
+#   edgeIpVersion: auto       # 边缘连接 IP 版本。可选: auto | 4(默认) | 6
+#   edgeBindAddress: ""       # 出口本地 IP(可选;其 IP 族会覆盖 edgeIpVersion)
+#   region: ""                # 边缘区域。可选: ""(全球,默认) | us
+#   postQuantum: false        # 后量子密钥交换(仅 protocol=quic 有效)。可选: true | false
+# reliability:
+#   retries: 0                # 连接重试上限。范围 0..20(0=用 cloudflared 默认值 5)
+#   gracePeriod: 30s          # 停止前等待在途请求的时长。范围 1s..5m(如 30s / 2m)
+# logging:
+#   logLevel: info            # 应用日志级别。可选: debug | info(默认) | warn | error | fatal
+#   transportLogLevel: info   # 传输层(QUIC/HTTP2)日志级别。取值同 logLevel
+# identity:
+#   label: ""                 # 连接器显示名(回传 CF 后台)。≤64,字符集 字母/数字/_/-/./空格
+#   tags:                     # 连接器标签(回传 CF 后台),key 须匹配 [A-Za-z_][A-Za-z0-9_]*
+#     env: prod
+# binaryVersion: ""           # 钉 cloudflared 版本。可选: ""/current(跟随全局) | 具体版本如 2026.5.2
+# advancedEnvOverrides:       # 高级 TUNNEL_* 覆盖(白名单;禁覆盖 token/metrics 等保留键)
+#   TUNNEL_XXX: value
+#
+`;
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface EditFormValues {
@@ -207,7 +237,13 @@ const Configs: React.FC = () => {
     setEditingId(null);
     setHasToken(false);
     form.resetFields();
-    setYamlText('# cloudflared 隧道 YAML 配置（token 请填上方字段，勿写在此处）\nedge:\n  protocol: auto\nlogging:\n  logLevel: info\n');
+    setYamlText(
+      YAML_HINT +
+        'edge:\n' +
+        '  protocol: auto            # 可选: auto | quic | http2\n' +
+        'logging:\n' +
+        '  logLevel: info            # 可选: debug | info | warn | error | fatal\n'
+    );
     setModalOpen(true);
   };
 
@@ -223,7 +259,8 @@ const Configs: React.FC = () => {
         manualStart: env.cfdmgr?.manualStart ?? false,
       });
       setHasToken(!!env.has_token);
-      setYamlText(configToYaml(env.config || {}));
+      // 编辑时同样带上字段/取值参考注释，方便对照与复制粘贴（保存时被 parseYaml 丢弃）。
+      setYamlText(YAML_HINT + configToYaml(env.config || {}));
     } catch {
       message.error('获取配置详情失败');
       return;
