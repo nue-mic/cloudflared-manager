@@ -84,16 +84,16 @@ func (m *cfMock) routeTunnel(w http.ResponseWriter, r *http.Request, rest string
 		cfFail(w, http.StatusUnauthorized)
 		return
 	}
-	switch {
-	case rest == "" || rest == "/":
+	switch rest {
+	case "", "/":
 		if r.Method == http.MethodPost {
 			cfOK(w, map[string]any{"id": "new-tid", "name": "created", "account_tag": mockCFAccount})
 			return
 		}
 		cfOK(w, []map[string]any{{"id": mockTunnelID, "name": "web", "status": "healthy", "account_tag": mockCFAccount}})
-	case rest == "/"+mockTunnelID:
+	case "/" + mockTunnelID:
 		cfOK(w, map[string]any{"id": mockTunnelID, "name": "web", "status": "healthy", "account_tag": mockCFAccount})
-	case rest == "/"+mockTunnelID+"/configurations":
+	case "/" + mockTunnelID + "/configurations":
 		if r.Method == http.MethodPut {
 			var body struct {
 				Config *cfapi.TunnelConfig `json:"config"`
@@ -104,9 +104,9 @@ func (m *cfMock) routeTunnel(w http.ResponseWriter, r *http.Request, rest string
 			}
 		}
 		cfOK(w, map[string]any{"tunnel_id": mockTunnelID, "version": 7, "config": m.config})
-	case rest == "/"+mockTunnelID+"/connections":
+	case "/" + mockTunnelID + "/connections":
 		cfOK(w, []map[string]any{{"id": "conn1", "version": "2026.1.0", "arch": "linux_amd64"}})
-	case rest == "/"+mockTunnelID+"/token":
+	case "/" + mockTunnelID + "/token":
 		cfOK(w, "remote-token-xyz")
 	default:
 		// Unknown tunnel id → 404 (drives the ownership-rejection test).
