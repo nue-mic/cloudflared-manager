@@ -1,5 +1,7 @@
 bin/
 dist/
+dist-ipk/
+openwrt-dist/
 tmp/
 data/
 node_modules/
