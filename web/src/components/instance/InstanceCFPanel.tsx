@@ -75,6 +75,8 @@ export default function InstanceCFPanel({ id }: Props) {
   // 公共主机名拖动排序
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [overIdx, setOverIdx] = useState<number | null>(null);
+  // 正在手动同步 DNS 的行 index（按钮 loading）。
+  const [syncingIdx, setSyncingIdx] = useState<number | null>(null);
 
   const errMsg = (err: unknown): string => {
     const e = err as { response?: { data?: { error?: { message?: string } } }; message?: string };
@@ -181,12 +183,18 @@ export default function InstanceCFPanel({ id }: Props) {
   const handlePhSubmit = async (values: PublicHostnameFormValues) => {
     const payload = formToPayload(values);
     try {
-      if (phEditing) {
-        await cfApi.updatePublicHostname(id, phEditing.index, payload);
-        message.success('公共主机名已更新');
-      } else {
-        await cfApi.addPublicHostname(id, payload);
-        message.success('公共主机名已添加');
+      const resp = phEditing
+        ? await cfApi.updatePublicHostname(id, phEditing.index, payload)
+        : await cfApi.addPublicHostname(id, payload);
+      message.success(phEditing ? '公共主机名已更新' : '公共主机名已添加');
+      // 同步代理 CNAME 的结果必须显式提示：此前被静默吞掉，用户只看到 DNS「无记录」却不知为何
+      // （常见原因：该 zone 不支持 Cloudflare 代理，如 .arpa 反向解析 zone；或 token 无 DNS 权限）。
+      if (payload.manage_dns) {
+        if (resp.data?.dns_error) {
+          message.warning('公共主机名已保存，但 DNS 代理 CNAME 同步失败：' + resp.data.dns_error, 8);
+        } else if (resp.data?.dns?.in_sync) {
+          message.success('DNS 代理 CNAME 已同步');
+        }
       }
       setPhModalOpen(false);
       setPhEditing(null);
@@ -194,6 +202,31 @@ export default function InstanceCFPanel({ id }: Props) {
     } catch (err: unknown) {
       message.error('保存失败：' + errMsg(err));
       throw err;
+    }
+  };
+
+  // 手动重新同步某条公共主机名的代理 CNAME（复用 update 接口重跑 ensureTunnelCNAME），
+  // 把失败原因明确暴露给用户——用于 DNS 显示「无记录 / 不同步」时一键修复或诊断。
+  const handleSyncDns = async (r: CFPublicHostname) => {
+    setSyncingIdx(r.index);
+    try {
+      const resp = await cfApi.updatePublicHostname(id, r.index, {
+        hostname: r.hostname,
+        service: r.service,
+        path: r.path,
+        origin_request: r.origin_request,
+        manage_dns: true,
+      });
+      if (resp.data?.dns_error) {
+        message.warning('DNS 同步失败：' + resp.data.dns_error, 8);
+      } else {
+        message.success('DNS 代理 CNAME 已同步');
+      }
+      loadHostnames();
+    } catch (err: unknown) {
+      message.error('DNS 同步失败：' + errMsg(err));
+    } finally {
+      setSyncingIdx(null);
     }
   };
 
@@ -348,12 +381,37 @@ export default function InstanceCFPanel({ id }: Props) {
     {
       title: 'DNS',
       key: 'dns',
-      width: 110,
+      width: 150,
       render: (_, r) => {
-        if (!r.dns) return <Text type="secondary">—</Text>;
-        if (!r.dns.exists) return <Tag>无记录</Tag>;
-        if (!r.dns.in_sync) return <Tag color="warning">不同步</Tag>;
-        return <Tag color="success">{r.dns.proxied ? '已代理' : '仅 DNS'}</Tag>;
+        // 兜底规则（无 hostname）不涉及 DNS。
+        if (!r.hostname) return <Text type="secondary">—</Text>;
+        const needSync = !r.dns || !r.dns.exists || !r.dns.in_sync;
+        return (
+          <Space size={4}>
+            {!r.dns ? (
+              <Text type="secondary">—</Text>
+            ) : !r.dns.exists ? (
+              <Tag>无记录</Tag>
+            ) : !r.dns.in_sync ? (
+              <Tag color="warning">不同步</Tag>
+            ) : (
+              <Tag color="success">{r.dns.proxied ? '已代理' : '仅 DNS'}</Tag>
+            )}
+            {needSync && (
+              <Tooltip title="重新同步指向本隧道的代理 CNAME（失败会提示具体原因）">
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ padding: 0, height: 'auto' }}
+                  loading={syncingIdx === r.index}
+                  onClick={() => handleSyncDns(r)}
+                >
+                  同步
+                </Button>
+              </Tooltip>
+            )}
+          </Space>
+        );
       },
     },
     {

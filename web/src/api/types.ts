@@ -448,3 +448,12 @@ export interface CFPublicHostnameList {
   tunnel_id?: string;
   dns_error?: string;
 }
+// 新增/编辑公共主机名（实例级聚合 API）的响应：除 hostname/service 外，带本次「代理 CNAME 同步」结果。
+// dns_error 非空表示 DNS 同步失败（如 zone 不支持代理、token 无 DNS 权限等），需向用户提示。
+export interface CFPublicHostnameWriteResp {
+  hostname: string;
+  service: string;
+  index?: number;
+  dns?: CFDNSStatus;
+  dns_error?: string;
+}

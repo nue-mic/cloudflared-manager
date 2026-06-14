@@ -26,6 +26,7 @@ import type {
   CFTokenInfo,
   CFBinding,
   CFPublicHostnameList,
+  CFPublicHostnameWriteResp,
 } from './types';
 
 // localStorage key
@@ -238,12 +239,12 @@ export const cfApi = {
   addPublicHostname: (
     id: string,
     payload: { hostname: string; service: string; path?: string; origin_request?: Record<string, unknown>; manage_dns?: boolean }
-  ) => client.post(`/api/v1/configs/${encodeURIComponent(id)}/cf/public-hostnames`, payload),
+  ) => client.post<CFPublicHostnameWriteResp>(`/api/v1/configs/${encodeURIComponent(id)}/cf/public-hostnames`, payload),
   updatePublicHostname: (
     id: string,
     index: number,
     payload: { hostname: string; service: string; path?: string; origin_request?: Record<string, unknown>; manage_dns?: boolean }
-  ) => client.put(`/api/v1/configs/${encodeURIComponent(id)}/cf/public-hostnames/${index}`, payload),
+  ) => client.put<CFPublicHostnameWriteResp>(`/api/v1/configs/${encodeURIComponent(id)}/cf/public-hostnames/${index}`, payload),
   deletePublicHostname: (id: string, index: number, deleteDns = false) =>
     client.delete(`/api/v1/configs/${encodeURIComponent(id)}/cf/public-hostnames/${index}`, {
       params: deleteDns ? { delete_dns: 'true' } : undefined,
