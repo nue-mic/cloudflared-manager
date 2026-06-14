@@ -462,11 +462,10 @@ const Configs: React.FC = () => {
                   const procState = item.state === 'starting' || item.state === 'stopping';
                   return (
                     <div
-                      draggable
-                      onDragStart={(e) => { setDragId(item.id); e.dataTransfer.effectAllowed = 'move'; }}
-                      onDragEnd={() => { setDragId(null); setOverId(null); }}
-                      onDragOver={(e) => { e.preventDefault(); if (overId !== item.id) setOverId(item.id); }}
-                      onDrop={(e) => { e.preventDefault(); handleReorderDrop(item.id); }}
+                      // 整卡不再 draggable；发起拖动只在把手（下方 HolderOutlined），
+                      // 避免点击启停/编辑/删除等正常内容时误触发排序。卡片仅作为拖放目标。
+                      onDragOver={(e) => { if (dragId == null) return; e.preventDefault(); if (overId !== item.id) setOverId(item.id); }}
+                      onDrop={(e) => { if (dragId == null) return; e.preventDefault(); handleReorderDrop(item.id); }}
                       style={{
                         borderTop: isOver ? `2px solid ${themeToken.colorPrimary}` : '2px solid transparent',
                         opacity: dragId === item.id ? 0.45 : 1,
@@ -487,7 +486,16 @@ const Configs: React.FC = () => {
                       >
                         {listCollapsed ? (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <HolderOutlined style={{ color: themeToken.colorTextQuaternary, cursor: 'grab', flex: '0 0 auto' }} />
+                            <span
+                              draggable
+                              onClick={(e) => e.stopPropagation()}
+                              onDragStart={(e) => { e.stopPropagation(); setDragId(item.id); e.dataTransfer.effectAllowed = 'move'; }}
+                              onDragEnd={() => { setDragId(null); setOverId(null); }}
+                              style={{ cursor: 'grab', display: 'inline-flex', flex: '0 0 auto' }}
+                              title="拖动排序"
+                            >
+                              <HolderOutlined style={{ color: themeToken.colorTextQuaternary }} />
+                            </span>
                             <Tooltip title={`${item.name || item.id}（${item.id}）`}>
                               <Text strong ellipsis style={{ flex: 1, minWidth: 0, fontSize: 13 }}>{item.name || item.id}</Text>
                             </Tooltip>
@@ -497,7 +505,16 @@ const Configs: React.FC = () => {
                           <>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 8 }}>
                               <div style={{ display: 'flex', alignItems: 'start', gap: 8, minWidth: 0 }}>
-                                <HolderOutlined style={{ color: themeToken.colorTextQuaternary, cursor: 'grab', marginTop: 4, flex: '0 0 auto' }} />
+                                <span
+                                  draggable
+                                  onClick={(e) => e.stopPropagation()}
+                                  onDragStart={(e) => { e.stopPropagation(); setDragId(item.id); e.dataTransfer.effectAllowed = 'move'; }}
+                                  onDragEnd={() => { setDragId(null); setOverId(null); }}
+                                  style={{ cursor: 'grab', display: 'inline-flex', marginTop: 4, flex: '0 0 auto' }}
+                                  title="拖动排序"
+                                >
+                                  <HolderOutlined style={{ color: themeToken.colorTextQuaternary }} />
+                                </span>
                                 <div style={{ minWidth: 0 }}>
                                   <Text strong style={{ fontSize: 15 }}>{item.name || item.id}</Text>
                                   <div><Text type="secondary" style={{ fontSize: 12 }}>ID: {item.id}</Text></div>

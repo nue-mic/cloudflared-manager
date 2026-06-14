@@ -313,7 +313,18 @@ export default function InstanceCFPanel({ id }: Props) {
       title: '',
       key: 'drag',
       width: 32,
-      render: () => <HolderOutlined style={{ color: '#bbb', cursor: 'grab' }} />,
+      // 只有把手可发起拖动；整行不再 draggable，避免点击/选中正常内容时误触发排序。
+      render: (_v, _r, index) => (
+        <span
+          draggable
+          onDragStart={(e) => { e.stopPropagation(); setDragIdx(index); }}
+          onDragEnd={() => { setDragIdx(null); setOverIdx(null); }}
+          style={{ cursor: 'grab', color: '#bbb', display: 'inline-flex', padding: '4px 2px' }}
+          title="拖动排序"
+        >
+          <HolderOutlined />
+        </span>
+      ),
     },
     {
       title: '公共主机名',
@@ -485,13 +496,10 @@ export default function InstanceCFPanel({ id }: Props) {
           loading={hostnamesLoading}
           pagination={false}
           onRow={(_, index) => ({
-            draggable: true,
-            onDragStart: () => setDragIdx(index ?? null),
-            onDragEnd: () => { setDragIdx(null); setOverIdx(null); },
-            onDragOver: (e) => { e.preventDefault(); if (index != null && overIdx !== index) setOverIdx(index); },
-            onDrop: (e) => { e.preventDefault(); if (index != null) handleHostnameReorder(index); },
+            // 行仅作为拖放目标（drop target）；发起拖动只在把手列。
+            onDragOver: (e) => { if (dragIdx == null) return; e.preventDefault(); if (index != null && overIdx !== index) setOverIdx(index); },
+            onDrop: (e) => { if (dragIdx == null) return; e.preventDefault(); if (index != null) handleHostnameReorder(index); },
             style: {
-              cursor: 'move',
               background: overIdx === index && dragIdx !== index ? 'rgba(24,144,255,0.10)' : undefined,
             },
           })}

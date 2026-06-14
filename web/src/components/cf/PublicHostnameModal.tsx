@@ -56,6 +56,13 @@ export default function PublicHostnameModal({
       .finally(() => setZonesLoading(false));
   }, [open, aid]);
 
+  // initial 由父组件内联构造（publicHostnameToForm / ingressRuleToForm），父级每次重渲染
+  // 都是一个新对象。实例详情页在实例「运行中」时每 5s 拉 live 状态会重渲染 InstanceCFPanel，
+  // 若把高频变化的 initial 列入下面 effect 的依赖，就会每 5s 跑一次 resetFields/setFieldsValue
+  // —— 表单被重置、打开着的域名下拉随之关闭、编辑中的输入被清空。
+  // 解法：初始化只依赖 open。effect 闭包会捕获「打开那一刻」的 initial；之后的重渲染因 deps
+  // 不变不再执行该 effect，下拉与输入得以保持。故意不把 initial 列入依赖（见 eslint-disable）。
+
   // 打开时设置基础表单值（新建用默认；编辑回填 initial 的非 hostname 字段）。
   useEffect(() => {
     if (!open) return;
@@ -65,15 +72,17 @@ export default function PublicHostnameModal({
     } else {
       form.setFieldsValue({ serviceType: 'http', manage_dns: true } as PublicHostnameFormValues);
     }
-  }, [open, initial, form]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, form]);
 
   // 编辑：待 zone 列表就绪后，把已有 hostname 拆成 subdomain/zoneName 填进下拉。
-  // 依赖 zones——zones 从 [] 变为已加载时会再跑一次，确保拆分用上完整列表。
+  // 依赖 zones——zones 从 [] 变为已加载时会再跑一次，确保拆分用上完整列表；同样不依赖 initial 身份。
   useEffect(() => {
     if (!open || !initial) return;
     const { subdomain: sub, zoneName: zn } = splitHostname(initial.hostname || '', zones);
     form.setFieldsValue({ subdomain: sub, zoneName: zn } as PublicHostnameFormValues);
-  }, [open, initial, zones, form]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, zones, form]);
 
   const handleOk = async () => {
     let values: PublicHostnameFormValues;
