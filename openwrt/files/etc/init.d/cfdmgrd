@@ -1,0 +1,126 @@
+#!/bin/sh /etc/rc.common
+# =============================================================================
+# cfdmgrd — OpenWrt procd 服务脚本
+#
+#   由 ipk 包安装到 /etc/init.d/cfdmgrd，受 procd 守护。
+#   配置读自 UCI: /etc/config/cfdmgrd (main 节)，转成 CFDM_* 环境变量注入。
+#   守护进程本身只认环境变量（见 internal/appcfg），故二进制零改动。
+#
+#   子命令 start/stop/restart/reload/enable/disable/status 由 /etc/rc.common 提供：
+#     /etc/init.d/cfdmgrd start       启动
+#     /etc/init.d/cfdmgrd enable      开机自启
+#   修改配置后:  uci commit cfdmgrd; /etc/init.d/cfdmgrd restart
+# =============================================================================
+
+USE_PROCD=1
+# 网络起来后再启动；停止时尽早
+START=95
+STOP=01
+
+PROG=/usr/bin/cfdmgrd
+CONF=cfdmgrd
+
+# ---------------------------------------------------------------------------
+# 生成强随机 16 进制令牌 (48 字符)。取不到随机源时返回空串 (由 ensure_token 拒绝启动)。
+# ---------------------------------------------------------------------------
+gen_token() {
+	# 读 24 字节随机数 -> 48 个 16 进制字符 (od/dd 均为 busybox 默认 applet)。
+	# 用 bs=1 count=24 直读字符设备，避免从管道短读导致长度不定。
+	local t=''
+	[ -r /dev/urandom ] && t="$(dd if=/dev/urandom bs=1 count=24 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n')"
+	printf '%s' "$t"
+}
+
+# ---------------------------------------------------------------------------
+# 确保存在登录令牌。守护进程要求 CFDM_API_TOKEN 非空，否则启动即退出，
+# 因此首次启动 (UCI token 为空) 时自动生成一个并落盘。幂等。
+# 安全优先：拿不到足够随机度时宁可拒绝启动 (返回非 0)，绝不退化成可预测弱令牌。
+# ---------------------------------------------------------------------------
+ensure_token() {
+	local t
+	config_load "$CONF"
+	config_get t main token ''
+	[ -n "$t" ] && return 0
+
+	t="$(gen_token)"
+	if [ "${#t}" -lt 32 ]; then
+		logger -t cfdmgrd "ERROR: 无法生成安全随机令牌 (缺少 /dev/urandom)，拒绝以弱令牌启动。请手动设置: uci set cfdmgrd.main.token=<你的令牌>; uci commit cfdmgrd; /etc/init.d/cfdmgrd restart"
+		return 1
+	fi
+	uci -q set "${CONF}.main.token=$t"
+	uci -q commit "$CONF"
+	logger -t cfdmgrd "首次启动：已生成随机 API 令牌 (uci get cfdmgrd.main.token 查看)"
+}
+
+start_service() {
+	local enabled http_addr token data_dir log_level docs_enabled cors_origins self_update cfd_autoupdate
+
+	config_load "$CONF"
+	config_get_bool enabled main enabled 1
+	if [ "$enabled" != "1" ]; then
+		logger -t cfdmgrd "在 /etc/config/cfdmgrd 中被禁用 (option enabled '0')，不启动"
+		return 0
+	fi
+
+	# 先确保有令牌 (失败则拒绝启动)，再重新读取拿到最新值
+	ensure_token || return 1
+
+	config_load "$CONF"
+	config_get      http_addr      main http_addr      ':18080'
+	config_get      token          main token          ''
+	config_get      data_dir       main data_dir       '/usr/lib/cfdmgrd'
+	config_get      log_level      main log_level      'info'
+	config_get_bool docs_enabled   main docs_enabled   1
+	config_get      cors_origins   main cors_origins   '*'
+	# 管理器自更新：OpenWrt 上默认 0（覆盖 opkg 二进制，与包管理器冲突）。
+	config_get_bool self_update    main self_update    0
+	# cloudflared 连接器自动更新：默认 1（守护进程把 cloudflared 拉到 data_dir，不碰 opkg）。
+	config_get_bool cfd_autoupdate main cfd_autoupdate 1
+
+	# 令牌兜底校验：为空则拒绝启动 (否则守护进程读不到 token 会自行退出)
+	[ -n "$token" ] || { logger -t cfdmgrd "ERROR: API 令牌为空，拒绝启动"; return 1; }
+
+	[ "$docs_enabled" = "1" ]   && docs_enabled="true"   || docs_enabled="false"
+	[ "$self_update" = "1" ]    && self_update="true"    || self_update="false"
+	[ "$cfd_autoupdate" = "1" ] && cfd_autoupdate="true" || cfd_autoupdate="false"
+
+	# 数据目录需持久 (OpenWrt 上 /var -> /tmp 是 tmpfs，重启即丢，切勿用)；
+	# 不可写时仅告警不阻断，提示改到可写持久路径 (或先配 extroot)
+	mkdir -p "$data_dir" 2>/dev/null
+	if touch "$data_dir/.wtest" 2>/dev/null; then
+		rm -f "$data_dir/.wtest" 2>/dev/null
+	else
+		logger -t cfdmgrd "WARNING: 数据目录不可写: $data_dir，请 uci set cfdmgrd.main.data_dir=<可写持久路径> 后重启"
+	fi
+
+	# 二进制由 all 包安装后经 cfdmgrd-fetch 联网拉取；若缺失（如装时无网）则拒绝启动并提示
+	[ -x "$PROG" ] || {
+		logger -t cfdmgrd "ERROR: 二进制未安装 ($PROG)，请联网后执行: cfdmgrd-fetch  然后 /etc/init.d/cfdmgrd start"
+		return 1
+	}
+
+	procd_open_instance
+	procd_set_param command "$PROG" serve
+	procd_set_param env \
+		CFDM_API_TOKEN="$token" \
+		CFDM_HTTP_ADDR="$http_addr" \
+		CFDM_DATA_DIR="$data_dir" \
+		CFDM_LOG_LEVEL="$log_level" \
+		CFDM_DOCS_ENABLED="$docs_enabled" \
+		CFDM_CORS_ORIGINS="$cors_origins" \
+		CFDM_SELF_UPDATE_ENABLED="$self_update" \
+		CFDM_CFD_AUTOUPDATE_ENABLED="$cfd_autoupdate"
+	# 崩溃自动拉起：3600s 内异常退出算崩溃，重试 5 次；之后退出则无限重启
+	procd_set_param respawn "${respawn_threshold:-3600}" "${respawn_timeout:-5}" "${respawn_retry:-5}"
+	# 把 stdout/stderr 接入 logd，可用 logread -e cfdmgrd 查看运行日志
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	# 配置文件变更触发实例重载
+	procd_set_param file /etc/config/cfdmgrd
+	procd_close_instance
+}
+
+service_triggers() {
+	# 监听 config.change 事件，配置变更后自动 reload
+	procd_add_reload_trigger "cfdmgrd"
+}

@@ -1,0 +1,307 @@
+#!/bin/sh
+# =============================================================================
+# cfdmgrd-fetch — 识别本机 CPU 架构，拉取对应的 cfdmgrd 守护进程静态二进制并装到 /usr/bin
+#
+#   注意：本脚本只下载「管理器守护进程 cfdmgrd」。cloudflared「连接器」二进制由
+#   守护进程自带的二进制自动更新在运行时下载到 data_dir，不在本脚本职责内。
+#
+#   下载优先级（与 scripts/install.sh 同款）：
+#     ① 自建 gh-raw 通道（首选）：{base}/{key}/v{tag}/{file}
+#     ② 公共 GitHub 代理（兜底）：{proxy}https://github.com/.../releases/download/...
+#     ③ GitHub 直连（最后兜底）
+#
+#   由 all 架构 ipk 的控制台/命令行触发；可随时手动重跑：
+#     cfdmgrd-fetch                 # 装/重装 VERSION 文件记录的版本
+#     cfdmgrd-fetch 0.0.14          # 装指定版本
+#     cfdmgrd-fetch latest          # 查最新版（经自建源/GitHub API）并安装（更新用）
+#     cfdmgrd-fetch --no-proxy      # 跳过自建源与公共代理，直连 GitHub
+#
+#   ⚠️ 受支持架构：amd64 / arm64 / armv7 / armv6 / 386 / riscv64。
+#      mips / mipsel / mips64le / loongarch 不支持（纯 Go SQLite 依赖在这些架构无法编译，
+#      故无对应发布产物），检测到会直接报错。
+#
+#   UCI 可选项 (/etc/config/cfdmgrd main 节)：
+#     option version '0.0.14'          覆盖默认版本；填 latest 表示拉最新
+#     option download_proxy 'https://my.mirror/'  指定单一公共代理（跳过内置公共代理列表）
+#     option no_proxy '1'              跳过自建源 + 公共代理，直连 GitHub
+#     option release_proxy_bases 'https://a,https://b'  覆盖内置自建 gh-raw 域名列表（逗号分隔）
+#     option install_proxy_key 'cfd-mgr-releases'  覆盖自建源的资源键（一般无需改）
+# =============================================================================
+set -eu
+
+REPO="mia-clark/cloudflared-manager"
+BIN_NAME="cfdmgrd"
+INSTALL_DIR="/usr/bin"
+LIBDIR="/usr/lib/cfdmgrd"
+
+# 自建 GitHub-Release 代理（gh-raw）首选通道：
+#   版本查询 GET {base}/{key}/latest      -> JSON, 取 "tag"
+#   资产下载 GET {base}/{key}/v{tag}/{file} -> 二进制流
+GHRAW_BASES_DEFAULT="
+https://gh-raw.966788.xyz
+https://gh-raw.988669.xyz
+https://gh-raw.s03.qzz.io
+https://gh-raw.s04.qzz.io
+https://gh-raw.s05.qzz.io
+https://gh-raw.s06.qzz.io
+https://gh-raw.s07.qzz.io
+"
+GHRAW_KEY_DEFAULT="cfd-mgr-releases"
+
+# 公共 GitHub 代理（仅作兜底；自建源全失败才用）
+DL_PROXIES="
+https://gh-proxy.com/
+https://ghfast.top/
+https://github.tbedu.top/
+https://gh.idayer.com/
+https://docker.srv1.qzz.io/
+https://dk-proxy.srv1.qzz.io/
+https://dk-proxy.966788.xyz/
+https://dk-proxy.srv0.qzz.io/
+https://docker.srv0.qzz.io/
+https://docker.966788.xyz/
+"
+
+log() { logger -t cfdmgrd-fetch "$*" 2>/dev/null; printf '%s\n' "[cfdmgrd-fetch] $*"; }
+die() { printf '%s\n' "[cfdmgrd-fetch][x] $*" >&2; logger -t cfdmgrd-fetch "ERROR: $*" 2>/dev/null; exit 1; }
+
+# ---------------------------------------------------------------------------
+# 解析参数 / UCI
+# ---------------------------------------------------------------------------
+VERSION=""
+NO_PROXY=0
+PROXY_OVERRIDE=""
+GHRAW_BASES=""
+GHRAW_KEY=""
+
+for a in "$@"; do
+	case "$a" in
+		--no-proxy) NO_PROXY=1 ;;
+		--proxy=*)  PROXY_OVERRIDE="${a#--proxy=}" ;;
+		-h|--help)  sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+		-*)         die "未知参数: $a" ;;
+		*)          VERSION="$a" ;;
+	esac
+done
+
+if command -v uci >/dev/null 2>&1; then
+	[ -n "$VERSION" ]        || VERSION="$(uci -q get cfdmgrd.main.version 2>/dev/null || true)"
+	[ -n "$PROXY_OVERRIDE" ] || PROXY_OVERRIDE="$(uci -q get cfdmgrd.main.download_proxy 2>/dev/null || true)"
+	GHRAW_BASES="$(uci -q get cfdmgrd.main.release_proxy_bases 2>/dev/null || true)"
+	GHRAW_KEY="$(uci -q get cfdmgrd.main.install_proxy_key 2>/dev/null || true)"
+	[ "$NO_PROXY" = "1" ] || [ "$(uci -q get cfdmgrd.main.no_proxy 2>/dev/null || echo 0)" != "1" ] || NO_PROXY=1
+fi
+
+# 自建源域名 / 键的最终取值（UCI 逗号分隔 -> 空格分隔）
+[ -n "$GHRAW_BASES" ] && GHRAW_BASES="$(printf '%s' "$GHRAW_BASES" | tr ',' ' ')" || GHRAW_BASES="$GHRAW_BASES_DEFAULT"
+[ -n "$GHRAW_KEY" ] || GHRAW_KEY="$GHRAW_KEY_DEFAULT"
+
+# ---------------------------------------------------------------------------
+# 下载工具
+# ---------------------------------------------------------------------------
+# 人类可读体积（纯整数运算，busybox 无 bc）
+human() {  # <bytes>
+	_b="${1:-0}"; case "$_b" in ''|*[!0-9]*) _b=0 ;; esac
+	if   [ "$_b" -ge 1048576 ]; then printf '%d.%d MB' "$(( _b / 1048576 ))" "$(( _b % 1048576 * 10 / 1048576 ))"
+	elif [ "$_b" -ge 1024 ];    then printf '%d KB' "$(( _b / 1024 ))"
+	else printf '%d B' "$_b"; fi
+}
+file_size() { wc -c < "$1" 2>/dev/null | tr -d ' \n' || printf 0; }
+epoch() { date +%s 2>/dev/null || printf 0; }
+
+# 实际下载（curl/wget），由 fetch_file 放后台调用
+_dl_raw() {  # <url> <dest>
+	if   command -v curl >/dev/null 2>&1; then curl -fsSL --max-time 180 "$1" -o "$2"
+	elif command -v wget >/dev/null 2>&1; then wget -q --timeout=180 -O "$2" "$1"
+	else return 127; fi
+}
+
+# 下载 <url> 到 <dest>：后台跑下载 + 轮询体积打印进度（与下载工具无关，busybox 通用）。
+fetch_file() {  # <url> <dest>
+	command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || die "未找到 curl 或 wget，无法下载"
+	: > "$2" 2>/dev/null || true
+	_dl_raw "$1" "$2" &
+	_pid=$!
+	_t0="$(epoch)"; _mark=0
+	while kill -0 "$_pid" 2>/dev/null; do
+		_sz="$(file_size "$2")"
+		if [ "$(( _sz - _mark ))" -ge 524288 ]; then   # 每累计增长 ≥512KB 打一行
+			_dt=$(( $(epoch) - _t0 )); [ "$_dt" -lt 1 ] && _dt=1
+			log "      ↓ 已下载 $(human "$_sz")  （$(human "$(( _sz / _dt ))")/s）"
+			_mark="$_sz"
+		fi
+		sleep 1
+	done
+	_rc=0; wait "$_pid" || _rc=$?
+	if [ "$_rc" = "0" ]; then
+		_sz="$(file_size "$2")"; _dt=$(( $(epoch) - _t0 )); [ "$_dt" -lt 1 ] && _dt=1
+		log "      ✓ 传输完成 $(human "$_sz")，用时 ${_dt}s（均速 $(human "$(( _sz / _dt ))")/s）"
+	fi
+	return "$_rc"
+}
+fetch_stdout() {  # <url>
+	if   command -v curl >/dev/null 2>&1; then curl -fsSL --max-time 15 "$1"
+	elif command -v wget >/dev/null 2>&1; then wget -qO- --timeout=15 "$1"
+	else return 1; fi
+}
+verify_targz() { [ -s "$1" ] && tar -tzf "$1" >/dev/null 2>&1; }
+
+# ---------------------------------------------------------------------------
+# 版本解析：留空 / latest 时，先问自建源 {base}/{key}/latest 取 "tag"，再回落 GitHub API
+# ---------------------------------------------------------------------------
+resolve_latest() {
+	_tag=""
+	if [ "$NO_PROXY" != "1" ]; then
+		for _base in $GHRAW_BASES; do
+			_tag="$(fetch_stdout "${_base%/}/${GHRAW_KEY}/latest" 2>/dev/null \
+				| grep '"tag"' | head -n1 \
+				| sed -E 's/.*"tag"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')" || true
+			[ -n "$_tag" ] && break
+		done
+	fi
+	if [ -z "$_tag" ]; then
+		_tag="$(fetch_stdout "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
+			| grep '"tag_name"' | head -n1 \
+			| sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')" || true
+	fi
+	printf '%s' "${_tag#v}"
+}
+
+log "════════════ cfdmgrd 核心拉取 ════════════"
+log "[1/4] 解析版本"
+# 默认版本读打包时写入的 VERSION 文件
+_vsrc="参数 / UCI 指定"
+if [ -z "$VERSION" ]; then
+	VERSION="$(cat "$LIBDIR/VERSION" 2>/dev/null || true)"
+	_vsrc="随包 ${LIBDIR}/VERSION"
+fi
+if [ -z "$VERSION" ] || [ "$VERSION" = "latest" ]; then
+	log "  查询最新版本（先自建源 ${GHRAW_KEY}/latest，失败回落 GitHub API）..."
+	VERSION="$(resolve_latest)"
+	[ -n "$VERSION" ] || die "无法获取最新版本（自建源与 GitHub API 均不可用）。请用 cfdmgrd-fetch <版本> 指定"
+	_vsrc="latest 在线解析"
+fi
+VERSION="${VERSION#v}"   # 统一去掉前导 v
+log "  目标版本: ${VERSION}  （来源: ${_vsrc}）"
+
+# ---------------------------------------------------------------------------
+# 架构探测（仅支持有发布产物的架构；mips/loong 因纯 Go SQLite 无法编译，明确报错）
+# ---------------------------------------------------------------------------
+detect_token() {
+	_m="$(uname -m 2>/dev/null || echo unknown)"
+	case "$_m" in
+		x86_64|amd64)              echo amd64 ;;
+		aarch64|arm64)             echo arm64 ;;
+		armv7l|armv7|armhf)        echo armv7 ;;
+		armv6l|armv6)              echo armv6 ;;
+		arm)                       echo armv7 ;;   # 裸 arm 多为 v7，按 v7 取
+		i386|i486|i586|i686|x86)   echo 386 ;;
+		riscv64)                   echo riscv64 ;;
+		mips|mipsel|mipsle|mips64|mips64el|mips64le)
+			die "本机架构 ${_m} 暂不支持：cfdmgrd 依赖的纯 Go SQLite 在 mips 系列无法编译，故无发布产物。请改用 x86_64 / aarch64 / armv7 / riscv64 设备运行 cfdmgrd（OpenWrt 路由可仅用其管理远端，或在旁路软路由上跑）。" ;;
+		loongarch64|loong64)
+			die "本机架构 ${_m} 暂不支持：cfdmgrd 依赖的纯 Go SQLite 在 loongarch 无法编译，故无发布产物。" ;;
+		*)       die "不支持/未知的 CPU 架构: ${_m}（受支持: amd64/arm64/armv7/armv6/386/riscv64）" ;;
+	esac
+}
+
+# ---------------------------------------------------------------------------
+# 下载：① 自建 gh-raw 首选 → ② 公共代理兜底 → ③ GitHub 直连
+# ---------------------------------------------------------------------------
+fallback_download() {  # <github_url> <dest>
+	_gh="$1"; _dest="$2"
+	if [ -n "$PROXY_OVERRIDE" ]; then
+		_p="${PROXY_OVERRIDE%/}/"
+		log "  · 使用指定公共代理: ${_p}${_gh}"
+		fetch_file "${_p}${_gh}" "$_dest" 2>/dev/null || true
+		verify_targz "$_dest" && { log "  ✓ 命中指定代理"; return 0; }
+		log "    ✗ 指定代理失败，回落直连"; rm -f "$_dest"
+	elif [ "$NO_PROXY" != "1" ]; then
+		for _p in $DL_PROXIES; do
+			log "  · 尝试公共代理: ${_p}${_gh}"
+			fetch_file "${_p}${_gh}" "$_dest" 2>/dev/null || { log "    ✗ 连接失败/超时"; rm -f "$_dest"; continue; }
+			verify_targz "$_dest" && { log "  ✓ 命中公共代理: ${_p}"; return 0; }
+			log "    ✗ 返回非法包，跳下一个"; rm -f "$_dest"
+		done
+		log "  全部公共代理失败，回落直连 GitHub"
+	fi
+	log "  · 直连 GitHub: ${_gh}"
+	fetch_file "$_gh" "$_dest" || return 1
+	verify_targz "$_dest" || { rm -f "$_dest"; return 1; }
+	log "  ✓ 命中 GitHub 直连"
+}
+
+download_asset() {  # <dest>
+	_dest="$1"
+	# ① 自建 gh-raw 首选（除非 --no-proxy）
+	if [ "$NO_PROXY" != "1" ]; then
+		for _base in $GHRAW_BASES; do
+			_url="${_base%/}/${GHRAW_KEY}/v${VERSION}/${ASSET}"
+			log "  · 尝试自建源: ${_url}"
+			fetch_file "$_url" "$_dest" 2>/dev/null || { log "    ✗ 连接失败/超时"; rm -f "$_dest"; continue; }
+			verify_targz "$_dest" && { log "  ✓ 命中自建源: ${_url}"; return 0; }
+			log "    ✗ 返回非法包(伪 200?)，跳下一个"; rm -f "$_dest"
+		done
+		log "  自建源全部不可用，回落公共代理 / 直连"
+	fi
+	# ②③ 公共代理 + 直连兜底
+	fallback_download "$GH_URL" "$_dest"
+}
+
+# ---------------------------------------------------------------------------
+# 安装前空间预检（cfdmgrd 解压约 15-20MB；cloudflared 另需 ~30MB 在 data_dir）
+# ---------------------------------------------------------------------------
+space_ok() {
+	command -v df >/dev/null 2>&1 || return 0
+	_avail="$(df -k "$INSTALL_DIR" 2>/dev/null | awk 'NR==2{print $4}')"
+	case "$_avail" in ''|*[!0-9]*) return 0 ;; esac
+	[ "$_avail" -ge 28000 ]
+}
+
+# ---------------------------------------------------------------------------
+# 主流程
+# ---------------------------------------------------------------------------
+log "[2/4] 探测 CPU 架构"
+TOKEN="$(detect_token)"
+ASSET="${BIN_NAME}_${VERSION}_linux_${TOKEN}.tar.gz"
+GH_URL="https://github.com/${REPO}/releases/download/v${VERSION}/${ASSET}"
+log "  CPU: $(uname -m 2>/dev/null || echo unknown)  →  资产架构 ${TOKEN}"
+log "  资产文件: ${ASSET}"
+log "  GitHub 直链: ${GH_URL}"
+log "  安装路径: ${INSTALL_DIR}/${BIN_NAME}"
+log "  数据目录: ${LIBDIR}"
+
+if ! space_ok; then
+	die "安装目录 ${INSTALL_DIR} 可用空间不足（需约 28MB）。请先配置 extroot/USB 外置存储后重试：https://openwrt.org/docs/guide-user/additional-software/extroot_configuration"
+fi
+
+TMP="$(mktemp -d 2>/dev/null || echo /tmp/cfdmgrd-fetch.$$)"
+mkdir -p "$TMP"
+# shellcheck disable=SC2064
+trap "rm -rf '$TMP'" EXIT INT TERM
+
+log "[3/4] 下载核心（cfdmgrd 二进制约 6–8 MB；网络慢时请耐心等待下方进度）"
+log "  临时目录: ${TMP}"
+log "  落地文件: ${TMP}/${ASSET}"
+download_asset "${TMP}/${ASSET}" || die "下载失败（自建源 + 公共代理 + 直连均不可用）。请检查网络后重跑: cfdmgrd-fetch"
+
+log "[4/4] 校验、解压并安装"
+log "  解压: ${TMP}/${ASSET}  →  ${TMP}/"
+tar -xzf "${TMP}/${ASSET}" -C "$TMP" || die "解压失败"
+[ -f "${TMP}/${BIN_NAME}" ] || die "安装包中未找到二进制 ${BIN_NAME}"
+
+# 先装到临时名再原子改名，避免覆盖运行中的二进制导致 text busy。
+# 用 cp+chmod 而非 install：busybox 默认不带 install applet。
+log "  原子安装: ${TMP}/${BIN_NAME}  →  ${INSTALL_DIR}/${BIN_NAME}"
+mkdir -p "$INSTALL_DIR"
+cp "${TMP}/${BIN_NAME}" "${INSTALL_DIR}/.${BIN_NAME}.new"
+chmod 0755 "${INSTALL_DIR}/.${BIN_NAME}.new"
+mv -f "${INSTALL_DIR}/.${BIN_NAME}.new" "${INSTALL_DIR}/${BIN_NAME}"
+
+# 记录已安装版本，便于排查
+mkdir -p "$LIBDIR"; printf '%s\n' "$VERSION" > "$LIBDIR/INSTALLED" 2>/dev/null || true
+
+log "  ✓ 已安装: ${INSTALL_DIR}/${BIN_NAME}"
+log "  ✓ 版本: $("${INSTALL_DIR}/${BIN_NAME}" version 2>/dev/null || echo "cfdmgrd ${VERSION}")"
+log "  提示: cloudflared 连接器二进制将由守护进程在启动后自动下载到 data_dir（无需本脚本处理）"
+log "════════════ 完成，回控制台点「启动」即可运行 ════════════"

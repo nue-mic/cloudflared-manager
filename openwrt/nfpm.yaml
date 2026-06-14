@@ -1,0 +1,96 @@
+# =============================================================================
+# nfpm 配置模板 — 生成 luci-app-cfdmgrd 的「单个 all 架构」OpenWrt .ipk 包
+#
+#   本包是 Architecture: all：不含任何 CPU 相关二进制，只装壳子：
+#     procd 服务脚本 + UCI 配置 + cfdmgrd-fetch（装时按本机 CPU 联网拉二进制）
+#     + LuCI web 控制台。
+#   一个包到处可装，由控制台/命令行 cfdmgrd-fetch 下载对应架构的 cfdmgrd 到 /usr/bin。
+#   cloudflared 连接器二进制由守护进程运行时自动下载，不在包内。
+#
+#   __XXX__ 占位符由 build-ipk.sh 用 sed 渲染（src 均为绝对路径，消除 CWD 歧义）：
+#     __PKG_VERSION__ / __PKG_RELEASE__  版本与包修订号  -> 包版本 <ver>-<rel>
+#     __INITD_SRC__ __CONFIG_SRC__ __FETCH_SRC__ __VERSION_SRC__  随包文件绝对路径
+#     __LUA_CTRL__ __LUA_VIEW__ __ACL_LUCI__ __UCIDEF_LUCI__       LuCI 壳子绝对路径
+#     __POSTINST__ __PRERM__ __POSTRM__  维护脚本绝对路径
+#
+#   产出可被 opkg (OpenWrt <=24.10) 安装的 ipk。OpenWrt 25.12+ 默认 apk(APKv3)，
+#   需另走 SDK，详见 openwrt/README.md。
+# =============================================================================
+
+name: "luci-app-cfdmgrd"
+arch: "all"
+platform: "linux"
+version: "__PKG_VERSION__"
+release: "__PKG_RELEASE__"
+section: "net"
+priority: "optional"
+maintainer: "mia-clark <mia-clark@users.noreply.github.com>"
+vendor: "mia-clark"
+homepage: "https://github.com/mia-clark/cloudflared-manager"
+license: "GPL-3.0"
+description: |
+  Headless cloudflared tunnel manager (cfdmgrd), OpenWrt wrapper (all-arch).
+  Ships the procd service, UCI config, a LuCI web console and a fetcher that
+  downloads the CPU-matching cfdmgrd binary from GitHub Releases on demand.
+  One package installs on any supported architecture (amd64/arm64/armv7/armv6/
+  386/riscv64). The cloudflared connector binary is auto-downloaded by the
+  daemon at runtime. Configure via LuCI (Services -> Cloudflared Manager) or
+  UCI at /etc/config/cfdmgrd.
+
+# 依赖 LuCI（web 控制台）。二进制是纯静态、按需下载，不算依赖。
+depends:
+  - "luci-base"
+  - "luci-compat"
+
+contents:
+  # procd 服务脚本
+  - src: "__INITD_SRC__"
+    dst: "/etc/init.d/cfdmgrd"
+    file_info:
+      mode: 0755
+
+  # UCI 默认配置 (标记 config|noreplace：升级时保留用户修改)
+  - src: "__CONFIG_SRC__"
+    dst: "/etc/config/cfdmgrd"
+    type: "config|noreplace"
+    file_info:
+      mode: 0644
+
+  # 二进制拉取器（按 CPU 架构联网下载对应 cfdmgrd 二进制）
+  - src: "__FETCH_SRC__"
+    dst: "/usr/sbin/cfdmgrd-fetch"
+    file_info:
+      mode: 0755
+
+  # 随包版本号（cfdmgrd-fetch 默认拉取此版本）
+  - src: "__VERSION_SRC__"
+    dst: "/usr/lib/cfdmgrd/VERSION"
+    file_info:
+      mode: 0644
+
+  # LuCI web 控制台：控制器 + 视图 + ACL + uci-defaults
+  - src: "__LUA_CTRL__"
+    dst: "/usr/lib/lua/luci/controller/cfdmgr.lua"
+    file_info:
+      mode: 0644
+  - src: "__LUA_VIEW__"
+    dst: "/usr/lib/lua/luci/view/cfdmgr/main.htm"
+    file_info:
+      mode: 0644
+  - src: "__ACL_LUCI__"
+    dst: "/usr/share/rpcd/acl.d/luci-app-cfdmgrd.json"
+    file_info:
+      mode: 0644
+  - src: "__UCIDEF_LUCI__"
+    dst: "/etc/uci-defaults/40_luci-cfdmgr"
+    file_info:
+      mode: 0755
+
+scripts:
+  postinstall: "__POSTINST__"
+  preremove: "__PRERM__"
+  postremove: "__POSTRM__"
+
+# 单个 all 包，Architecture: all 可装到任意设备
+ipk:
+  arch: "all"

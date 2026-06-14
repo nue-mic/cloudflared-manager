@@ -1,0 +1,424 @@
+<%+header%>
+
+<style>
+	/* 作用域收敛到 .cmx，既不污染 LuCI 其它页面，又以特异性压过主题对 h2/h3/button/input 的改写 */
+	.cmx{display:block;color:var(--text-color,#333)}
+	.cmx *{box-sizing:border-box}
+
+	.cmx-title{font-size:1.2rem;font-weight:700;color:var(--gray-dark,#32325d);background:var(--background-color-medium,#fff);padding:14px 18px;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.06);margin:0 0 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+	.cmx-title .t{display:flex;align-items:center;gap:8px}
+
+	.cmx .cm-pill{display:inline-flex;align-items:center;gap:7px;padding:5px 13px;border-radius:999px;font-size:12.5px;font-weight:600;background:rgba(107,114,128,.14);color:#6b7280;white-space:nowrap}
+	.cmx .cm-pill.on{background:#dcfce7;color:#166534}.cmx .cm-pill.off{background:#fee2e2;color:#991b1b}.cmx .cm-pill.warn{background:#fef3c7;color:#92400e}
+	.cmx .cm-pdot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:0 0 auto}
+	.cmx .cm-pill.on .cm-pdot{animation:cmPulse 1.5s ease-in-out infinite}
+
+	.cmx .cm-tabs{display:flex;align-items:center;gap:2px;margin:0 0 14px;border-bottom:1px solid rgba(0,0,0,.1)}
+	.cmx .cm-tab{cursor:pointer;border:0;background:transparent;height:auto;padding:11px 20px;font-size:14px;font-weight:600;color:var(--text-color,#374151);opacity:.55;border-bottom:2px solid transparent;border-radius:7px 7px 0 0;transition:opacity .15s,color .15s,background .15s}
+	.cmx .cm-tab:hover{opacity:.9;background:rgba(127,127,127,.08)}
+	.cmx .cm-tab.active{opacity:1;color:#f48120;border-bottom-color:#f48120}
+	.cmx .cm-tabs .cm-pill{margin-left:auto}
+	.cmx .cm-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#dc2626;vertical-align:middle;margin-left:5px;animation:cmPulse 1.4s ease-in-out infinite}
+
+	.cmx .cm-card{background:var(--background-color-medium,#fff);border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:18px 20px;margin:0 0 14px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+	.cmx-h3{margin:0 0 4px;font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px;color:inherit;background:none;padding:0;border:0}
+	.cmx .cm-desc{font-size:12.5px;opacity:.6;margin:0 0 14px;line-height:1.5}
+
+	.cmx .cm-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:10px;margin:0 0 16px}
+	.cmx .cm-stat{display:flex;align-items:center;gap:11px;padding:11px 13px;background:rgba(127,127,127,.06);border:1px solid rgba(0,0,0,.07);border-radius:10px}
+	.cmx .cm-stat .si{font-size:20px;line-height:1;flex:0 0 auto;opacity:.85}
+	.cmx .cm-stat .sl{font-size:12px;opacity:.6}
+	.cmx .cm-stat .sv{font-weight:700;font-size:14px;margin-top:2px}
+	.cmx .cm-badge{display:inline-block;padding:2px 9px;border-radius:12px;font-size:12px;font-weight:600}
+	.cmx .cm-on{background:#dcfce7;color:#166534}.cmx .cm-off{background:#fee2e2;color:#991b1b}.cmx .cm-warn{background:#fef3c7;color:#92400e}
+
+	.cmx .cm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:15px 20px}
+	.cmx .cm-field{display:flex;flex-direction:column;min-width:0}
+	.cmx .cm-field.full{grid-column:1/-1}
+	.cmx .cm-field label{font-size:13px;margin:0 0 6px;opacity:.85;font-weight:500}
+	.cmx .cm-field input,.cmx .cm-field select{width:100%;height:auto;padding:8px 11px;border:1px solid var(--border-color-medium,rgba(0,0,0,.18));border-radius:8px;background:var(--background-color-medium,#fff);color:inherit;font-size:13px;transition:border-color .12s,box-shadow .12s}
+	.cmx .cm-field input:focus,.cmx .cm-field select:focus{outline:none;border-color:#f48120;box-shadow:0 0 0 3px rgba(244,129,32,.16)}
+	.cmx .cm-sub{font-size:11.5px;opacity:.55;margin-top:5px;line-height:1.5}
+	.cmx .cm-inline{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap}
+	.cmx .cm-inline input{flex:1 1 200px}
+
+	.cmx .cm-btns{display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin-top:4px}
+	.cmx .cm-spacer{flex:1 1 auto;min-width:8px}
+	.cmx .cm-btn{display:inline-flex;align-items:center;gap:6px;cursor:pointer;border:1px solid transparent;border-radius:8px;height:auto;padding:8px 16px;font-size:13px;font-weight:600;color:#fff;background:#f48120;transition:filter .12s,box-shadow .12s,opacity .12s;line-height:1.2}
+	.cmx .cm-btn:hover:not(:disabled){filter:brightness(1.07);box-shadow:0 2px 8px rgba(0,0,0,.12)}
+	.cmx .cm-btn:active:not(:disabled){filter:brightness(.94);box-shadow:none}
+	.cmx .cm-btn.green{background:#16a34a}.cmx .cm-btn.red{background:#dc2626}.cmx .cm-btn.amber{background:#d97706}
+	.cmx .cm-btn.ghost{background:transparent;color:var(--text-color,#374151);border-color:rgba(0,0,0,.2)}
+	.cmx .cm-btn.ghost:hover:not(:disabled){background:rgba(127,127,127,.1);box-shadow:none}
+	.cmx .cm-btn.sm{padding:7px 12px;font-size:12px}
+	.cmx .cm-btn:disabled{opacity:.4;cursor:not-allowed;box-shadow:none;filter:none}
+
+	.cmx .cm-notice{background:#fffbeb;color:#92400e;border:1px solid #fde68a;border-radius:9px;padding:11px 14px;font-size:13px;margin:0 0 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;line-height:1.5}
+	.cmx .cm-notice b{font-weight:700}
+	.cmx .cm-notice a{color:#b45309;font-weight:700;text-decoration:underline;cursor:pointer}
+	.cmx .cm-notice a:hover{color:#92400e}
+
+	.cmx #cm_log{display:none;white-space:pre-wrap;word-break:break-all;background:#0b1020;color:#d1d5db;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.55;padding:12px 14px;border-radius:9px;max-height:280px;overflow:auto;margin-top:14px;border:1px solid rgba(255,255,255,.06)}
+	.cmx .cm-hint{font-size:12px;opacity:.6;margin-top:10px;line-height:1.5}
+
+	.cmx #cm_toasts{position:fixed;top:16px;right:16px;z-index:99999;display:flex;flex-direction:column;gap:8px;max-width:360px}
+	.cmx .cm-toast{padding:11px 15px;border-radius:9px;color:#fff;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.2);animation:cmIn .18s ease;display:flex;align-items:center;gap:9px;line-height:1.4}
+	.cmx .cm-toast.info{background:#2563eb}.cmx .cm-toast.success{background:#16a34a}.cmx .cm-toast.error{background:#dc2626}.cmx .cm-toast.warn{background:#d97706}
+	.cmx .cm-toast .sp{width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:cmSpin .7s linear infinite;flex:0 0 auto}
+
+	@keyframes cmIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:none}}
+	@keyframes cmSpin{to{transform:rotate(360deg)}}
+	@keyframes cmPulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+	@media (max-width:520px){
+		.cmx .cm-card{padding:15px 15px}
+		.cmx .cm-tab{padding:10px 14px;font-size:13px}
+		.cmx .cm-btns .cm-spacer{display:none}
+	}
+</style>
+
+<div class="cmx">
+
+	<div id="cm_toasts"></div>
+
+	<div class="cmx-title">
+		<span class="t">☁️ <%:Cloudflared Manager · 控制台%></span>
+		<span class="cm-pill" id="cm_pill"><span class="cm-pdot"></span><span id="cm_pilltxt"><%:连接中…%></span></span>
+	</div>
+
+	<div class="cm-tabs">
+		<button type="button" class="cm-tab active" data-cmtab="overview" onclick="switchTab('overview')">📊 <%:概览 / 控制%></button>
+		<button type="button" class="cm-tab" data-cmtab="core" onclick="switchTab('core')">⬇️ <%:核心下载%><span id="cm_tabdot" class="cm-dot" style="display:none"></span></button>
+	</div>
+
+	<!-- ============ Tab 1：概览 / 控制 ============ -->
+	<div class="cm-panel" id="tab_overview">
+
+		<div class="cm-card">
+			<div class="cmx-h3">📊 <%:运行状态%></div>
+			<div class="cm-desc"><%:服务的启停与管理后台入口；隧道的增删改启停请进入管理后台操作。cloudflared 连接器二进制由守护进程在启动后自动下载/更新，无需在此处理。%></div>
+
+			<div class="cm-notice" id="cm_nobin" style="display:none">
+				<span>⚠️</span>
+				<span><b><%:尚未安装核心二进制 cfdmgrd%></b>，<%:服务无法启动。%></span>
+				<a onclick="switchTab('core')"><%:前往「核心下载」页下载 →%></a>
+				<span><%:完成后回到本页点「启动」。%></span>
+			</div>
+
+			<div class="cm-stats">
+				<div class="cm-stat"><span class="si">📦</span><div><div class="sl"><%:核心二进制%></div><div class="sv" id="cm_binstate">—</div></div></div>
+				<div class="cm-stat"><span class="si">🏷️</span><div><div class="sl"><%:版本%></div><div class="sv" id="cm_version">—</div></div></div>
+				<div class="cm-stat"><span class="si">⚡</span><div><div class="sl"><%:服务%></div><div class="sv" id="cm_runstate">—</div></div></div>
+				<div class="cm-stat"><span class="si">🖥️</span><div><div class="sl"><%:CPU 架构%></div><div class="sv" id="cm_arch">—</div></div></div>
+			</div>
+
+			<div class="cm-btns">
+				<button class="cm-btn green" id="cm_start" onclick="ctl('start', this)"><%:启动%></button>
+				<button class="cm-btn red"   id="cm_stop"  onclick="ctl('stop', this)"><%:停止%></button>
+				<button class="cm-btn ghost" id="cm_restart" onclick="ctl('restart', this)"><%:重启%></button>
+				<span class="cm-spacer"></span>
+				<button class="cm-btn" id="cm_open" onclick="openBackend()"><%:打开管理后台%> ↗</button>
+			</div>
+			<div class="cm-hint"><%:运行日志可在路由器 SSH 里用 `logread -e cfdmgrd` 查看；隧道级日志在管理后台内。%></div>
+		</div>
+
+		<div class="cm-card">
+			<div class="cmx-h3">⚙️ <%:基本配置%></div>
+			<div class="cm-desc"><%:守护进程的监听端口、登录令牌与数据目录；保存后会自动重启服务生效。%></div>
+
+			<div class="cm-grid">
+				<div class="cm-field">
+					<label><%:监听地址%></label>
+					<input type="text" id="cfg_http_addr" placeholder=":18080">
+					<div class="cm-sub"><%:格式 :端口（所有网卡）或 ip:端口（指定网卡）。%></div>
+				</div>
+				<div class="cm-field">
+					<label><%:日志级别%></label>
+					<select id="cfg_log_level">
+						<option value="trace">trace</option><option value="debug">debug</option>
+						<option value="info">info</option><option value="warn">warn</option><option value="error">error</option>
+					</select>
+					<div class="cm-sub"><%:排障时调 debug / trace，日常用 info 即可。%></div>
+				</div>
+				<div class="cm-field full">
+					<label><%:登录令牌（API Token · 管理后台访问凭证）%></label>
+					<div class="cm-inline">
+						<input type="password" id="cfg_token" placeholder="<%:留空 = 首次启动自动生成%>" autocomplete="off">
+						<button type="button" class="cm-btn ghost sm" id="cm_tokeneye" onclick="toggleToken()">👁 <%:显示%></button>
+						<button type="button" class="cm-btn ghost sm" onclick="copyToken(this)">📋 <%:复制%></button>
+					</div>
+					<div class="cm-sub"><%:用于登录 cfdmgrd 管理后台，请妥善保管；泄露后他人可控制你的隧道。%></div>
+				</div>
+				<div class="cm-field full">
+					<label><%:数据目录%></label>
+					<input type="text" id="cfg_data_dir" placeholder="/usr/lib/cfdmgrd">
+					<div class="cm-sub"><%:存放隧道配置、日志与 cloudflared 连接器二进制，须为持久化路径；勿用 /tmp、/var 等易失目录，否则重启丢配置。约需 50MB 空间。%></div>
+				</div>
+				<div class="cm-field">
+					<label><%:cloudflared 连接器自动更新%></label>
+					<select id="cfg_cfd_autoupdate">
+						<option value="1"><%:开启（推荐，守护进程自动下载/更新）%></option>
+						<option value="0"><%:关闭（在管理后台手动管理）%></option>
+					</select>
+					<div class="cm-sub"><%:开启后守护进程自动把 cloudflared 下到数据目录并随官方新版更新，不经 opkg。%></div>
+				</div>
+				<div class="cm-field">
+					<label><%:管理器自身自更新%></label>
+					<select id="cfg_self_update">
+						<option value="0"><%:关闭（推荐，OpenWrt 用重装 ipk / cfdmgrd-fetch 升级）%></option>
+						<option value="1"><%:开启（会覆盖 opkg 装的二进制，不推荐）%></option>
+					</select>
+					<div class="cm-sub"><%:管理器自身（cfdmgrd）的 Web 端一键自更新；OpenWrt 上默认关闭以免与包管理器冲突。%></div>
+				</div>
+			</div>
+
+			<div class="cm-btns" style="margin-top:16px">
+				<button class="cm-btn" id="cm_save" onclick="saveCfg(this)"><%:保存并重启生效%></button>
+			</div>
+		</div>
+
+	</div>
+
+	<!-- ============ Tab 2：核心下载 ============ -->
+	<div class="cm-panel" id="tab_core" style="display:none">
+
+		<div class="cm-card">
+			<div class="cmx-h3">⬇️ <%:核心二进制 cfdmgrd%></div>
+			<div class="cm-desc"><%:首次使用请先下载核心。下载优先走自建源，公共代理 / GitHub 直连兜底。仅支持 amd64 / arm64 / armv7 / armv6 / 386 / riscv64 架构。%></div>
+
+			<div class="cm-field" style="max-width:380px">
+				<label><%:拉取版本%></label>
+				<input type="text" id="cm_dlver" value="latest" placeholder="latest / 0.0.14 / 留空">
+				<div class="cm-sub"><%:留空 = 随包版本；填 latest = 最新；也可指定具体版本号。%></div>
+			</div>
+
+			<div class="cm-btns" style="margin-top:16px">
+				<button class="cm-btn amber" id="cm_dl" onclick="download(this)"><%:下载 / 更新核心%></button>
+				<button class="cm-btn ghost" id="cm_logbtn" onclick="toggleLog()"><%:显示日志%></button>
+				<button class="cm-btn ghost" onclick="copyLog(this)"><%:复制日志%></button>
+			</div>
+
+			<pre id="cm_log"></pre>
+			<div class="cm-hint"><%:核心就绪后，回到「概览 / 控制」页点「启动」即可运行服务；cloudflared 连接器会在服务启动后自动下载。%></div>
+		</div>
+
+	</div>
+
+</div>
+
+<script type="text/javascript">//<![CDATA[
+	var BASE = '<%=luci.dispatcher.build_url("admin/services/cfdmgr")%>';
+	function $(id){ return document.getElementById(id); }
+
+	function switchTab(name){
+		var tabs = document.querySelectorAll('.cm-tab');
+		for(var i=0;i<tabs.length;i++){
+			if(tabs[i].getAttribute('data-cmtab')===name){ tabs[i].classList.add('active'); }
+			else { tabs[i].classList.remove('active'); }
+		}
+		$('tab_overview').style.display = (name==='overview') ? '' : 'none';
+		$('tab_core').style.display = (name==='core') ? '' : 'none';
+	}
+
+	function toast(msg, type, sticky){
+		var box = $('cm_toasts');
+		var t = document.createElement('div');
+		t.className = 'cm-toast ' + (type||'info');
+		t.innerHTML = (sticky ? '<span class="sp"></span>' : '') + '<span></span>';
+		t.lastChild.textContent = msg;
+		box.appendChild(t);
+		if(!sticky){ setTimeout(function(){ t.style.opacity='0'; setTimeout(function(){ t.remove(); }, 250); }, 2600); }
+		return t;
+	}
+	function clearToast(t){ if(t){ t.style.opacity='0'; setTimeout(function(){ t.remove(); }, 250); } }
+
+	function copyText(text){
+		if(navigator.clipboard && window.isSecureContext){
+			return navigator.clipboard.writeText(text);
+		}
+		return new Promise(function(resolve, reject){
+			try{
+				var ta = document.createElement('textarea');
+				ta.value = text;
+				ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.opacity = '0';
+				document.body.appendChild(ta); ta.focus(); ta.select();
+				var ok = document.execCommand('copy');
+				document.body.removeChild(ta);
+				ok ? resolve() : reject(new Error('execCommand copy failed'));
+			}catch(e){ reject(e); }
+		});
+	}
+
+	function req(action, method, body){
+		var opt = { method: method||'GET', credentials:'same-origin' };
+		if(body){ opt.headers={'Content-Type':'application/x-www-form-urlencoded'}; opt.body=body; }
+		return fetch(BASE+'/'+action, opt).then(function(r){
+			if(!r.ok) throw new Error('HTTP '+r.status);
+			return r.json();
+		});
+	}
+	function form(o){ var a=[]; for(var k in o){ a.push(encodeURIComponent(k)+'='+encodeURIComponent(o[k]==null?'':o[k])); } return a.join('&'); }
+	function busy(btn, on, txt){
+		if(!btn) return;
+		if(on){ btn.dataset.txt = btn.textContent; btn.textContent = txt || '<%:处理中…%>'; btn.disabled = true; }
+		else { btn.textContent = btn.dataset.txt || btn.textContent; btn.disabled = false; }
+	}
+
+	var curPort = '18080';
+	function portFromAddr(a){ if(!a) return '18080'; var m=String(a).match(/:(\d+)\s*$/); return m?m[1]:'18080'; }
+
+	function setPill(d){
+		var pill = $('cm_pill'), pt = $('cm_pilltxt');
+		pill.classList.remove('on','off','warn');
+		if(!d.has_binary){ pill.classList.add('warn'); pt.textContent = '<%:未安装核心%>'; }
+		else if(d.running){ pill.classList.add('on'); pt.textContent = '<%:运行中%>' + (d.version ? (' · ' + d.version) : ''); }
+		else { pill.classList.add('off'); pt.textContent = '<%:已停止%>'; }
+	}
+
+	function refresh(){
+		return req('info').then(function(d){
+			$('cm_arch').textContent = d.arch || '—';
+			$('cm_binstate').innerHTML = d.has_binary
+				? '<span class="cm-badge cm-on"><%:已安装%></span>'
+				: '<span class="cm-badge cm-off"><%:未安装%></span>';
+			$('cm_version').textContent = d.version || '—';
+			$('cm_runstate').innerHTML = d.running
+				? '<span class="cm-badge cm-on"><%:运行中%></span>'
+				: '<span class="cm-badge cm-off"><%:已停止%></span>';
+			setPill(d);
+
+			var nobin = !d.has_binary;
+			$('cm_nobin').style.display = nobin ? 'flex' : 'none';
+			$('cm_tabdot').style.display = nobin ? 'inline-block' : 'none';
+
+			var c = d.cfg||{};
+			if(!(document.activeElement && document.activeElement.tagName==='INPUT')){
+				$('cfg_http_addr').value = c.http_addr||'';
+				$('cfg_token').value = c.token||'';
+				$('cfg_data_dir').value = c.data_dir||'';
+				$('cfg_log_level').value = c.log_level||'info';
+				$('cfg_cfd_autoupdate').value = (c.cfd_autoupdate==='0') ? '0' : '1';
+				$('cfg_self_update').value = (c.self_update==='1') ? '1' : '0';
+			}
+			curPort = portFromAddr(c.http_addr);
+
+			$('cm_start').disabled = !d.has_binary || d.running;
+			$('cm_start').title = !d.has_binary ? '<%:请先在「核心下载」页下载核心%>' : (d.running ? '<%:服务已在运行%>' : '');
+			$('cm_stop').disabled = !d.running;
+			$('cm_stop').title = !d.running ? '<%:服务未运行%>' : '';
+			$('cm_restart').disabled = !d.has_binary;
+			$('cm_restart').title = !d.has_binary ? '<%:请先下载核心%>' : '';
+			$('cm_open').disabled = !d.running;
+			$('cm_open').title = !d.running ? '<%:服务未运行，无法打开后台%>' : '';
+
+			if(!$('cm_dl').disabled || !window._dling){ $('cm_dl').disabled = !!d.downloading; }
+			return d;
+		}).catch(function(e){
+			$('cm_pill').classList.remove('on','off','warn');
+			$('cm_pilltxt').textContent = '<%:连接失败%>';
+			toast('<%:读取状态失败：%>'+e.message, 'error');
+		});
+	}
+
+	var ACT_TXT = { start:'<%:启动%>', stop:'<%:停止%>', restart:'<%:重启%>' };
+	function ctl(act, btn){
+		if(btn && btn.disabled) return;
+		var t = toast(ACT_TXT[act]+'<%:中…%>', 'info', true);
+		busy(btn, true);
+		req('control/'+act).then(function(r){
+			clearToast(t); busy(btn, false);
+			if(r && r.ok){ toast('✓ '+ACT_TXT[act]+'<%:成功%>', 'success'); }
+			else { toast('✗ '+ACT_TXT[act]+'<%:失败（看 logread -e cfdmgrd）%>', 'error'); }
+			setTimeout(refresh, 600);
+		}).catch(function(e){ clearToast(t); busy(btn,false); toast('✗ '+ACT_TXT[act]+'<%:失败：%>'+e.message, 'error'); });
+	}
+
+	function openBackend(){
+		if($('cm_open').disabled){ toast('<%:服务未运行，请先启动%>', 'warn'); return; }
+		var url = location.protocol+'//'+location.hostname+':'+curPort+'/';
+		var w = window.open(url, '_blank');
+		if(!w) toast('<%:浏览器拦截了弹窗，请手动访问 %>'+url, 'warn');
+		else toast('<%:已在新标签打开后台（端口 %>'+curPort+'）', 'success');
+	}
+
+	function toggleToken(){
+		var i = $('cfg_token'), b = $('cm_tokeneye');
+		if(i.type === 'password'){ i.type = 'text'; b.innerHTML = '🙈 <%:隐藏%>'; }
+		else { i.type = 'password'; b.innerHTML = '👁 <%:显示%>'; }
+	}
+	function copyToken(btn){
+		var v = $('cfg_token').value;
+		if(!v){ toast('<%:令牌为空，无可复制内容%>', 'warn'); return; }
+		copyText(v).then(function(){ toast('✓ <%:已复制登录令牌%>', 'success'); })
+			.catch(function(){ toast('✗ <%:复制失败，请手动选择文本复制%>', 'error'); });
+	}
+	function copyLog(btn){
+		var v = $('cm_log').textContent || '';
+		if(!v.trim()){ toast('<%:暂无日志可复制%>', 'warn'); return; }
+		copyText(v).then(function(){ toast('✓ <%:已复制日志%>', 'success'); })
+			.catch(function(){ toast('✗ <%:复制失败，请手动选择文本复制%>', 'error'); });
+	}
+
+	function saveCfg(btn){
+		var t = toast('<%:正在保存并重启…%>', 'info', true);
+		busy(btn, true);
+		var body = form({
+			http_addr: $('cfg_http_addr').value,
+			token: $('cfg_token').value,
+			data_dir: $('cfg_data_dir').value,
+			log_level: $('cfg_log_level').value,
+			cfd_autoupdate: $('cfg_cfd_autoupdate').value,
+			self_update: $('cfg_self_update').value
+		});
+		req('save','POST',body).then(function(r){
+			if(!(r && r.ok)) throw new Error('save failed');
+			return req('control/restart');
+		}).then(function(){
+			clearToast(t); busy(btn,false);
+			toast('✓ <%:已保存并重启生效%>', 'success');
+			setTimeout(refresh, 800);
+		}).catch(function(e){ clearToast(t); busy(btn,false); toast('✗ <%:保存失败：%>'+e.message, 'error'); });
+	}
+
+	function toggleLog(){
+		var l = $('cm_log'), b = $('cm_logbtn');
+		var show = (l.style.display==='none' || !l.style.display);
+		l.style.display = show ? 'block' : 'none';
+		if(b) b.textContent = show ? '<%:隐藏日志%>' : '<%:显示日志%>';
+	}
+
+	var pollTimer = null;
+	function download(btn){
+		$('cm_log').style.display = 'block';
+		if($('cm_logbtn')) $('cm_logbtn').textContent = '<%:隐藏日志%>';
+		window._dling = true;
+		busy(btn, true, '<%:下载中…%>');
+		var t = toast('<%:开始下载核心…%>', 'info', true);
+		var body = form({ version: $('cm_dlver').value });
+		req('download','POST',body).then(function(r){
+			if(r && r.status==='in_progress') toast('<%:已有下载在进行%>', 'warn');
+			if(pollTimer) clearInterval(pollTimer);
+			pollTimer = setInterval(function(){
+				req('download_status').then(function(d){
+					$('cm_log').textContent = d.log || '';
+					$('cm_log').scrollTop = $('cm_log').scrollHeight;
+					if(!d.running){
+						clearInterval(pollTimer); pollTimer=null;
+						window._dling = false; clearToast(t); busy(btn, false);
+						if(d.has_binary){ toast('✓ <%:核心已就绪 %>'+(d.version||'')+'<%:，可回「概览」页启动%>', 'success'); }
+						else { toast('✗ <%:下载失败，请看下方日志%>', 'error'); }
+						refresh();
+					}
+				}).catch(function(){});
+			}, 1500);
+		}).catch(function(e){
+			clearToast(t); busy(btn,false); window._dling=false;
+			toast('✗ <%:下载启动失败：%>'+e.message, 'error');
+		});
+	}
+
+	refresh();
+	setInterval(function(){ if(!pollTimer) refresh(); }, 6000);
+//]]></script>
+
+<%+footer%>

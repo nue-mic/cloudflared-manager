@@ -1,0 +1,14 @@
+{
+	"luci-app-cfdmgrd": {
+		"description": "Grant access to cfdmgrd web shell (config / fetch core / service control)",
+		"read": {
+			"uci": [ "cfdmgrd" ]
+		},
+		"write": {
+			"uci": [ "cfdmgrd" ],
+			"file": {
+				"/usr/bin/cfdmgrd": [ "write" ]
+			}
+		}
+	}
+}

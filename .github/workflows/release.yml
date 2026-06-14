@@ -198,6 +198,18 @@ jobs:
           go-version: '1.25'
           cache: true
 
+      # 先生成 OpenWrt 单 all 架构 ipk（壳子包，不含二进制，只需版本号 + openwrt/ 源文件）。
+      # 放到 dist/ 之外的 openwrt-dist/（goreleaser --clean 只清 dist/，不动它），
+      # 再由 goreleaser 的 release.extra_files 与二进制/tar 包一并上传——
+      # ipk 就融进 goreleaser 这一次发布里，无需独立 job。
+      - name: Build OpenWrt ipk (all)
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          chmod +x openwrt/build-ipk.sh openwrt/files/usr/sbin/cfdmgrd-fetch openwrt/scripts/*.sh
+          ./openwrt/build-ipk.sh --version "${{ needs.bump.outputs.version }}" --out openwrt-dist
+          ls -la openwrt-dist
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: '~> v2'

@@ -88,6 +88,11 @@ release:
   github:
     owner: mia-clark
     name: cloudflared-manager
+  # OpenWrt 单 all 架构 ipk（壳子包，不含二进制）由 release.yml 在 goreleaser 前用
+  # openwrt/build-ipk.sh 生成到 openwrt-dist/（dist/ 之外，--clean 不清它），这里随
+  # 本次 Release 一并上传。glob 无匹配时 goreleaser 仅警告不失败，故本地无 ipk 也能跑。
+  extra_files:
+    - glob: ./openwrt-dist/*.ipk
   header: |
     ## cfdmgrd {{ .Tag }}
 

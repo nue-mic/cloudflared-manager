@@ -1,0 +1,38 @@
+config cfdmgrd 'main'
+	# 是否启用服务 (0=禁用，init 脚本将不启动)
+	option enabled '1'
+	# 监听地址，格式 :端口 或 ip:端口 (OpenWrt 默认 :18080，避开 uhttpd 与常见占用)
+	option http_addr ':18080'
+	# API 登录令牌 (后台访问凭证)。留空时首次启动自动生成强随机令牌，
+	# 之后用 `uci get cfdmgrd.main.token` 查看。
+	option token ''
+	# 数据根目录 (profiles/logs/stores/meta.json/metrics.db/bin)。必须持久化路径，
+	# 切勿用 /var 或 /tmp (OpenWrt 上为 tmpfs，重启丢失)。
+	# 这里也存 cloudflared 连接器二进制 (由守护进程自动更新下载，约 30MB)。
+	option data_dir '/usr/lib/cfdmgrd'
+	# 日志级别: trace|debug|info|warn|error
+	option log_level 'info'
+	# 是否开放 /api/docs 在线文档 (1/0)
+	option docs_enabled '1'
+	# CORS 白名单，逗号分隔或 *
+	option cors_origins '*'
+	# 管理器守护进程「自身」Web 端一键自更新 (1/0)。OpenWrt 上默认 0：
+	# 自更新会覆盖 opkg 装的 cfdmgrd，与包管理器冲突。升级请重装 ipk 或 cfdmgrd-fetch。
+	option self_update '0'
+	# cloudflared「连接器」二进制自动更新 (1/0)。默认 1：守护进程会自动下载/更新
+	# cloudflared 到 data_dir (不经 opkg，安全)。关掉则需在 Web UI 手动管理 cloudflared。
+	option cfd_autoupdate '1'
+
+	# --- 以下供 cfdmgrd-fetch 拉取「守护进程」二进制时使用（一般无需改）---
+	# 下载优先级：① 自建 gh-raw 源（首选）② 公共代理（兜底）③ GitHub 直连
+	#
+	# 指定要拉取的版本；留空=随包版本(/usr/lib/cfdmgrd/VERSION)；填 latest=拉最新
+	# option version '0.0.14'
+	# 指定单一公共代理（跳过内置公共代理列表），形如 https://my.mirror/
+	# option download_proxy ''
+	# 设为 1 则跳过自建源 + 公共代理，直连 GitHub
+	option no_proxy '0'
+	# 覆盖内置自建 gh-raw 源域名列表（逗号分隔），一般无需改
+	# option release_proxy_bases 'https://gh-raw.966788.xyz,https://gh-raw.988669.xyz'
+	# 覆盖自建源资源键，一般无需改
+	# option install_proxy_key 'cfd-mgr-releases'
