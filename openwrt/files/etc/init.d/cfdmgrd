@@ -77,12 +77,17 @@ ensure_token() {
 }
 
 start_service() {
-	local enabled http_addr token data_dir log_level docs_enabled cors_origins self_update cfd_autoupdate
+	local enabled boot_autostart http_addr token data_dir log_level docs_enabled cors_origins self_update cfd_autoupdate
 
 	config_load "$CONF"
-	config_get_bool enabled main enabled 1
-	if [ "$enabled" != "1" ]; then
-		logger -t cfdmgrd "在 /etc/config/cfdmgrd 中被禁用 (option enabled '0')，不启动"
+	# 状态持久化：enabled = 期望运行状态（由 LuCI 启停按钮维护）。procd 开机总会调用本脚本，
+	# 由这里决定是否真正拉起：
+	#   - 默认跟随 enabled —— 上次「停止」(enabled=0) 则重启后保持停止，不再自己跑起来；
+	#   - 仅当显式开启「强制开机自启」(boot_autostart=1) 时，才无视上次状态强制启动。
+	config_get_bool enabled        main enabled        1
+	config_get_bool boot_autostart main boot_autostart 0
+	if [ "$boot_autostart" != "1" ] && [ "$enabled" != "1" ]; then
+		logger -t cfdmgrd "上次为停止状态 (enabled=0) 且未开启「强制开机自启」(boot_autostart=0)，不启动"
 		return 0
 	fi
 

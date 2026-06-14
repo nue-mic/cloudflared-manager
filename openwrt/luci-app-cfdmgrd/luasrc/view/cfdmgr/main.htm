@@ -177,6 +177,14 @@
 					</select>
 					<div class="cm-sub"><%:管理器自身（cfdmgrd）的 Web 端一键自更新；OpenWrt 上默认关闭以免与包管理器冲突。%></div>
 				</div>
+				<div class="cm-field">
+					<label><%:开机自启 / 系统重启后%></label>
+					<select id="cfg_boot_autostart">
+						<option value="0"><%:跟随当前状态（推荐：停止后重启仍保持停止）%></option>
+						<option value="1"><%:强制自启（无论上次状态，开机总是启动）%></option>
+					</select>
+					<div class="cm-sub"><%:默认跟随当前状态——点了「停止」后系统重启仍保持停止，点了「启动」则重启后自动启动；设为「强制自启」则无论上次是否停止，开机都强制拉起。%></div>
+				</div>
 			</div>
 
 			<div class="cm-btns" style="margin-top:16px">
@@ -334,6 +342,7 @@
 				$('cfg_log_level').value = c.log_level||'info';
 				$('cfg_cfd_autoupdate').value = (c.cfd_autoupdate==='0') ? '0' : '1';
 				$('cfg_self_update').value = (c.self_update==='1') ? '1' : '0';
+					$('cfg_boot_autostart').value = (c.boot_autostart==='1') ? '1' : '0';
 			}
 			curPort = portFromAddr(c.http_addr);
 
@@ -425,7 +434,7 @@
 	}
 
 	function saveCfg(btn){
-		var t = toast('<%:正在保存并重启…%>', 'info', true);
+		var t = toast('<%:正在保存…%>', 'info', true);
 		busy(btn, true);
 		var body = form({
 			http_addr: $('cfg_http_addr').value,
@@ -433,14 +442,18 @@
 			data_dir: $('cfg_data_dir').value,
 			log_level: $('cfg_log_level').value,
 			cfd_autoupdate: $('cfg_cfd_autoupdate').value,
-			self_update: $('cfg_self_update').value
+			self_update: $('cfg_self_update').value,
+			boot_autostart: $('cfg_boot_autostart').value
 		});
 		req('save','POST',body).then(function(r){
-			if(!(r && r.ok)) throw new Error('save failed');
-			return req('control/restart');
-		}).then(function(){
+			if(!(r && r.ok)) throw new Error((r && r.error) || 'save failed');
+			// 仅在服务当前运行时重启以应用新配置；已停止则保持停止——保存配置不应启动一个已停止的服务。
+			return req('info').then(function(d){
+				return (d && d.running) ? req('control/restart').then(function(){ return true; }) : false;
+			});
+		}).then(function(restarted){
 			clearToast(t); busy(btn,false);
-			toast('✓ <%:已保存并重启生效%>', 'success');
+			toast(restarted ? '✓ <%:已保存并重启生效%>' : '✓ <%:已保存（服务当前已停止，将在下次启动时生效）%>', 'success');
 			setTimeout(refresh, 800);
 		}).catch(function(e){ clearToast(t); busy(btn,false); toast('✗ <%:保存失败：%>'+e.message, 'error'); });
 	}

@@ -58,6 +58,7 @@ function action_info()
 		downloading = fs.access(DL_LOCK) and true or false,
 		cfg = {
 			enabled        = u("enabled", "1"),
+			boot_autostart = u("boot_autostart", "0"),
 			http_addr      = u("http_addr", ":18085"),
 			token          = u("token", ""),
 			data_dir       = u("data_dir", "/usr/lib/cfdmgrd"),
@@ -108,6 +109,9 @@ function action_save()
 	if su == "1" or su == "0" then uci:set("cfdmgrd", "main", "self_update", su) end
 	local ca = http.formvalue("cfd_autoupdate")
 	if ca == "1" or ca == "0" then uci:set("cfdmgrd", "main", "cfd_autoupdate", ca) end
+	-- 开机强制自启开关（与启停按钮维护的 enabled 互不干扰）。
+	local ba = http.formvalue("boot_autostart")
+	if ba == "1" or ba == "0" then uci:set("cfdmgrd", "main", "boot_autostart", ba) end
 	uci:commit("cfdmgrd")
 	http.prepare_content("application/json")
 	http.write_json({ ok = true })
@@ -178,6 +182,16 @@ function action_control(act)
 	if not allow[act] then
 		http.write_json({ ok = false, error = "invalid action" })
 		return
+	end
+	-- 状态持久化：启停按钮把「期望运行状态」(enabled) 落盘，使系统重启后保持当前状态——
+	-- 停止 -> enabled=0（重启后不再自己跑起来）；启动/重启 -> enabled=1。
+	-- 「强制开机自启」(boot_autostart) 由保存配置单独控制，不在此改动。
+	if act == "start" or act == "restart" then
+		if not uci:get("cfdmgrd", "main") then uci:set("cfdmgrd", "main", "cfdmgrd") end
+		uci:set("cfdmgrd", "main", "enabled", "1"); uci:commit("cfdmgrd")
+	elseif act == "stop" then
+		if not uci:get("cfdmgrd", "main") then uci:set("cfdmgrd", "main", "cfdmgrd") end
+		uci:set("cfdmgrd", "main", "enabled", "0"); uci:commit("cfdmgrd")
 	end
 	local rc = sys.call(INIT .. " " .. act .. " >/dev/null 2>&1")
 	http.write_json({ ok = (rc == 0), running = is_running() })
