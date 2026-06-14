@@ -31,6 +31,7 @@ import {
   DeleteOutlined,
   LinkOutlined,
   DisconnectOutlined,
+  HolderOutlined,
 } from '@ant-design/icons';
 import { cfApi } from '../../api/client';
 import type { CFAccountView, CFBinding, CFTokenInfo, CFPublicHostname } from '../../api/types';
@@ -39,6 +40,7 @@ import {
   formToPayload,
   publicHostnameToForm,
   originRequestTags,
+  reorderHostnames,
   type PublicHostnameFormValues,
 } from '../../pages/cfIngress';
 
@@ -70,6 +72,9 @@ export default function InstanceCFPanel({ id }: Props) {
   const [dnsError, setDnsError] = useState<string>('');
   const [phModalOpen, setPhModalOpen] = useState(false);
   const [phEditing, setPhEditing] = useState<CFPublicHostname | null>(null);
+  // 公共主机名拖动排序
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [overIdx, setOverIdx] = useState<number | null>(null);
 
   const errMsg = (err: unknown): string => {
     const e = err as { response?: { data?: { error?: { message?: string } } }; message?: string };
@@ -202,6 +207,37 @@ export default function InstanceCFPanel({ id }: Props) {
     }
   };
 
+  // 公共主机名拖动排序：按各行的 ingress 下标取权威规则重排 → putTunnelConfig（兜底恒末尾）。
+  const handleHostnameReorder = async (toPos: number) => {
+    const from = dragIdx;
+    setDragIdx(null);
+    setOverIdx(null);
+    if (from == null || from === toPos || !binding) return;
+    const aid = binding.account_id || '';
+    const tid = binding.tunnel_id || '';
+    if (!aid || !tid) {
+      message.warning('缺少账号/隧道信息，无法排序');
+      return;
+    }
+    const newOrder = [...hostnames];
+    const [moved] = newOrder.splice(from, 1);
+    newOrder.splice(toPos, 0, moved);
+    setHostnames(newOrder); // 乐观
+    try {
+      const cfgResp = await cfApi.getTunnelConfig(aid, tid);
+      const cfg = cfgResp.data?.config ?? {};
+      const ingress = cfg.ingress ?? [];
+      const orderedRules = newOrder.map((ph) => ingress[ph.index]).filter(Boolean);
+      const next = reorderHostnames(cfg, orderedRules);
+      await cfApi.putTunnelConfig(aid, tid, next);
+      message.success('已保存新顺序');
+    } catch (err: unknown) {
+      message.error('保存顺序失败：' + errMsg(err));
+    } finally {
+      loadHostnames(); // 以服务端为准回正 + 刷新 index
+    }
+  };
+
   if (loading) return <Skeleton active />;
 
   // ── 未绑定 ──────────────────────────────────────────────────────────────────
@@ -273,6 +309,12 @@ export default function InstanceCFPanel({ id }: Props) {
 
   // ── 已绑定 ──────────────────────────────────────────────────────────────────
   const phColumns: ColumnsType<CFPublicHostname> = [
+    {
+      title: '',
+      key: 'drag',
+      width: 32,
+      render: () => <HolderOutlined style={{ color: '#bbb', cursor: 'grab' }} />,
+    },
     {
       title: '公共主机名',
       dataIndex: 'hostname',
@@ -442,6 +484,17 @@ export default function InstanceCFPanel({ id }: Props) {
           dataSource={hostnames}
           loading={hostnamesLoading}
           pagination={false}
+          onRow={(_, index) => ({
+            draggable: true,
+            onDragStart: () => setDragIdx(index ?? null),
+            onDragEnd: () => { setDragIdx(null); setOverIdx(null); },
+            onDragOver: (e) => { e.preventDefault(); if (index != null && overIdx !== index) setOverIdx(index); },
+            onDrop: (e) => { e.preventDefault(); if (index != null) handleHostnameReorder(index); },
+            style: {
+              cursor: 'move',
+              background: overIdx === index && dragIdx !== index ? 'rgba(24,144,255,0.10)' : undefined,
+            },
+          })}
           locale={{
             emptyText: (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无公共主机名，点击「添加」配置回源。" />

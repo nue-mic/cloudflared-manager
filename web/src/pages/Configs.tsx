@@ -13,6 +13,9 @@ import {
   EditOutlined,
   PlusOutlined,
   ExclamationCircleOutlined,
+  HolderOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
 } from '@ant-design/icons';
 
 import CodeMirror from '@uiw/react-codemirror';
@@ -119,6 +122,21 @@ const Configs: React.FC = () => {
 
   const [form] = Form.useForm<EditFormValues>();
 
+  // 拖动排序 + 列表缩窄
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+  const [listCollapsed, setListCollapsed] = useState<boolean>(
+    () => localStorage.getItem('cfdmgr_inst_list_collapsed') === '1'
+  );
+
+  const toggleListCollapsed = () => {
+    setListCollapsed((v) => {
+      const next = !v;
+      localStorage.setItem('cfdmgr_inst_list_collapsed', next ? '1' : '0');
+      return next;
+    });
+  };
+
   const configsRef = useRef(configs);
   useEffect(() => { configsRef.current = configs; }, [configs]);
 
@@ -164,6 +182,34 @@ const Configs: React.FC = () => {
     } catch {
       message.error('无法获取配置列表');
     }
+  };
+
+  // 持久化新顺序到后端（meta.json Sort；备份/还原会带上此顺序）。
+  const persistOrder = async (order: string[]) => {
+    try {
+      await client.post('/api/v1/configs/reorder', { order });
+    } catch {
+      message.error('保存排序失败，已回滚');
+      fetchConfigs();
+    }
+  };
+
+  // 把 dragId 拖到 targetId 的位置，乐观更新 + 落盘。
+  const handleReorderDrop = (targetId: string) => {
+    const src = dragId;
+    setDragId(null);
+    setOverId(null);
+    if (!src || src === targetId) return;
+    setConfigs((prev) => {
+      const from = prev.findIndex((c) => c.id === src);
+      const to = prev.findIndex((c) => c.id === targetId);
+      if (from < 0 || to < 0) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      persistOrder(next.map((c) => c.id));
+      return next;
+    });
   };
 
   const fetchStatus = async (id: string) => {
@@ -385,13 +431,20 @@ const Configs: React.FC = () => {
   return (
     <div style={{ height: '100%' }}>
       <Row gutter={16} style={{ height: '100%', minHeight: 580 }}>
-        {/* 左栏：实例列表 */}
-        <Col xs={24} md={8} style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <Title level={4} style={{ margin: 0 }}>隧道实例</Title>
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              新建
-            </Button>
+        {/* 左栏：实例列表（可拖动排序，可一键缩窄） */}
+        <Col xs={24} md={listCollapsed ? 5 : 8} style={{ display: 'flex', flexDirection: 'column', transition: 'all .2s' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 8 }}>
+            <Space size={6}>
+              <Tooltip title={listCollapsed ? '展开列表' : '缩窄列表'}>
+                <Button type="text" size="small" icon={listCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} onClick={toggleListCollapsed} />
+              </Tooltip>
+              {!listCollapsed && <Title level={4} style={{ margin: 0 }}>隧道实例</Title>}
+            </Space>
+            {listCollapsed ? (
+              <Tooltip title="新建实例"><Button type="primary" size="small" icon={<PlusOutlined />} onClick={openCreate} /></Tooltip>
+            ) : (
+              <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建</Button>
+            )}
           </div>
 
           <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4 }}>
@@ -405,76 +458,106 @@ const Configs: React.FC = () => {
                 renderItem={(item) => {
                   const isActive = item.id === activeConfigId;
                   const isRunning = item.state === 'started';
+                  const isOver = overId === item.id && dragId !== item.id;
+                  const procState = item.state === 'starting' || item.state === 'stopping';
                   return (
-                    <Card
-                      hoverable
+                    <div
+                      draggable
+                      onDragStart={(e) => { setDragId(item.id); e.dataTransfer.effectAllowed = 'move'; }}
+                      onDragEnd={() => { setDragId(null); setOverId(null); }}
+                      onDragOver={(e) => { e.preventDefault(); if (overId !== item.id) setOverId(item.id); }}
+                      onDrop={(e) => { e.preventDefault(); handleReorderDrop(item.id); }}
                       style={{
-                        marginBottom: 12,
-                        cursor: 'pointer',
-                        border: `1px solid ${isActive ? themeToken.colorPrimary : themeToken.colorBorderSecondary}`,
-                        background: isActive ? themeToken.colorPrimaryBg : themeToken.colorBgContainer,
-                        borderRadius: 10,
+                        borderTop: isOver ? `2px solid ${themeToken.colorPrimary}` : '2px solid transparent',
+                        opacity: dragId === item.id ? 0.45 : 1,
+                        transition: 'opacity .15s',
                       }}
-                      onClick={() => setActiveConfigId(item.id)}
-                      styles={{ body: { padding: 16 } }}
                     >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 8 }}>
-                        <div>
-                          <Text strong style={{ fontSize: 15 }}>{item.name || item.id}</Text>
-                          <div><Text type="secondary" style={{ fontSize: 12 }}>ID: {item.id}</Text></div>
-                        </div>
-                        {getStatusBadge(item.state)}
-                      </div>
-
-                      <div style={{ borderBottom: `1px solid ${themeToken.colorBorderSecondary}`, margin: '8px 0' }} />
-
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Space>
-                          {isRunning ? (
-                            <Button type="primary" danger size="small" icon={<StopOutlined />}
-                              loading={statusLoading[item.id]}
-                              onClick={(e) => { e.stopPropagation(); handleStop(item.id); }}>
-                              停止
-                            </Button>
-                          ) : (
-                            <Button type="primary" size="small" icon={<PlayCircleOutlined />}
-                              loading={statusLoading[item.id]}
-                              style={{ background: '#52c41a', borderColor: '#52c41a' }}
-                              onClick={(e) => { e.stopPropagation(); handleStart(item.id); }}>
-                              启动
-                            </Button>
-                          )}
-                          {isRunning && (
-                            <Tooltip title="重启">
-                              <Button size="small" icon={<ReloadOutlined />}
-                                loading={statusLoading[item.id]}
-                                onClick={(e) => { e.stopPropagation(); handleReload(item.id); }} />
+                      <Card
+                        hoverable
+                        style={{
+                          marginBottom: 12,
+                          cursor: 'pointer',
+                          border: `1px solid ${isActive ? themeToken.colorPrimary : themeToken.colorBorderSecondary}`,
+                          background: isActive ? themeToken.colorPrimaryBg : themeToken.colorBgContainer,
+                          borderRadius: 10,
+                        }}
+                        onClick={() => setActiveConfigId(item.id)}
+                        styles={{ body: { padding: listCollapsed ? 10 : 16 } }}
+                      >
+                        {listCollapsed ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <HolderOutlined style={{ color: themeToken.colorTextQuaternary, cursor: 'grab', flex: '0 0 auto' }} />
+                            <Tooltip title={`${item.name || item.id}（${item.id}）`}>
+                              <Text strong ellipsis style={{ flex: 1, minWidth: 0, fontSize: 13 }}>{item.name || item.id}</Text>
                             </Tooltip>
-                          )}
-                        </Space>
+                            <Badge status={isRunning ? 'success' : procState ? 'processing' : 'default'} />
+                          </div>
+                        ) : (
+                          <>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 8 }}>
+                              <div style={{ display: 'flex', alignItems: 'start', gap: 8, minWidth: 0 }}>
+                                <HolderOutlined style={{ color: themeToken.colorTextQuaternary, cursor: 'grab', marginTop: 4, flex: '0 0 auto' }} />
+                                <div style={{ minWidth: 0 }}>
+                                  <Text strong style={{ fontSize: 15 }}>{item.name || item.id}</Text>
+                                  <div><Text type="secondary" style={{ fontSize: 12 }}>ID: {item.id}</Text></div>
+                                </div>
+                              </div>
+                              {getStatusBadge(item.state)}
+                            </div>
 
-                        <Space>
-                          <Tooltip title="编辑配置">
-                            <Button size="small" type="text" icon={<EditOutlined />}
-                              onClick={(e) => { e.stopPropagation(); openEdit(item.id); }} />
-                          </Tooltip>
-                          <Tooltip title="克隆配置">
-                            <Button size="small" type="text" icon={<CopyOutlined />}
-                              onClick={(e) => { e.stopPropagation(); openDuplicate(item.id); }} />
-                          </Tooltip>
-                          <Popconfirm
-                            title={`确定删除「${item.name || item.id}」？`}
-                            description="删除后不可恢复。"
-                            onConfirm={() => handleDelete(item.id)}
-                            onPopupClick={(e) => e.stopPropagation()}
-                            okText="删除" okType="danger" cancelText="取消"
-                          >
-                            <Button size="small" type="text" danger icon={<DeleteOutlined />}
-                              onClick={(e) => e.stopPropagation()} />
-                          </Popconfirm>
-                        </Space>
-                      </div>
-                    </Card>
+                            <div style={{ borderBottom: `1px solid ${themeToken.colorBorderSecondary}`, margin: '8px 0' }} />
+
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <Space>
+                                {isRunning ? (
+                                  <Button type="primary" danger size="small" icon={<StopOutlined />}
+                                    loading={statusLoading[item.id]}
+                                    onClick={(e) => { e.stopPropagation(); handleStop(item.id); }}>
+                                    停止
+                                  </Button>
+                                ) : (
+                                  <Button type="primary" size="small" icon={<PlayCircleOutlined />}
+                                    loading={statusLoading[item.id]}
+                                    style={{ background: '#52c41a', borderColor: '#52c41a' }}
+                                    onClick={(e) => { e.stopPropagation(); handleStart(item.id); }}>
+                                    启动
+                                  </Button>
+                                )}
+                                {isRunning && (
+                                  <Tooltip title="重启">
+                                    <Button size="small" icon={<ReloadOutlined />}
+                                      loading={statusLoading[item.id]}
+                                      onClick={(e) => { e.stopPropagation(); handleReload(item.id); }} />
+                                  </Tooltip>
+                                )}
+                              </Space>
+
+                              <Space>
+                                <Tooltip title="编辑配置">
+                                  <Button size="small" type="text" icon={<EditOutlined />}
+                                    onClick={(e) => { e.stopPropagation(); openEdit(item.id); }} />
+                                </Tooltip>
+                                <Tooltip title="克隆配置">
+                                  <Button size="small" type="text" icon={<CopyOutlined />}
+                                    onClick={(e) => { e.stopPropagation(); openDuplicate(item.id); }} />
+                                </Tooltip>
+                                <Popconfirm
+                                  title={`确定删除「${item.name || item.id}」？`}
+                                  description="删除后不可恢复。"
+                                  onConfirm={() => handleDelete(item.id)}
+                                  onPopupClick={(e) => e.stopPropagation()}
+                                  okText="删除" okType="danger" cancelText="取消"
+                                >
+                                  <Button size="small" type="text" danger icon={<DeleteOutlined />}
+                                    onClick={(e) => e.stopPropagation()} />
+                                </Popconfirm>
+                              </Space>
+                            </div>
+                          </>
+                        )}
+                      </Card>
+                    </div>
                   );
                 }}
               />
@@ -483,7 +566,7 @@ const Configs: React.FC = () => {
         </Col>
 
         {/* 右栏：实例详情 */}
-        <Col xs={24} md={16}>
+        <Col xs={24} md={listCollapsed ? 19 : 16} style={{ transition: 'all .2s' }}>
           {activeSnap ? (
             <InstanceDetailPanel
               snap={activeSnap}

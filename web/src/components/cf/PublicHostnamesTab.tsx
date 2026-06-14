@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Card, Table, Button, Space, Tag, Empty, Typography, App, Popconfirm, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined, HolderOutlined } from '@ant-design/icons';
 import { cfApi } from '../../api/client';
 import type { CFTunnelConfig, CFIngressRule } from '../../api/types';
 import {
@@ -15,6 +15,7 @@ import {
   appendHostnameRule,
   replaceRuleAt,
   removeRuleAt,
+  reorderHostnames,
   formToIngressRule,
   ingressRuleToForm,
   originRequestTags,
@@ -43,6 +44,10 @@ export default function PublicHostnamesTab({ aid, tid }: Props) {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<RowItem | null>(null);
+
+  // 拖动排序（行内）
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [overIdx, setOverIdx] = useState<number | null>(null);
 
   const errMsg = (err: unknown): string => {
     const e = err as { response?: { data?: { error?: { message?: string } } }; message?: string };
@@ -112,7 +117,35 @@ export default function PublicHostnamesTab({ aid, tid }: Props) {
     }
   };
 
+  // 行拖动排序：重排 ingress（兜底规则恒末尾）→ putTunnelConfig，乐观更新失败回滚。
+  const handleRowDrop = async (toPos: number) => {
+    const from = dragIdx;
+    setDragIdx(null);
+    setOverIdx(null);
+    if (from == null || from === toPos) return;
+    const newRows = [...rows];
+    const [moved] = newRows.splice(from, 1);
+    newRows.splice(toPos, 0, moved);
+    const nextConfig = reorderHostnames(config, newRows.map((r) => r.rule));
+    const prev = config;
+    setConfig(nextConfig); // 乐观
+    try {
+      const resp = await cfApi.putTunnelConfig(aid, tid, nextConfig);
+      setConfig(resp.data?.config ?? nextConfig);
+      message.success('已保存新顺序');
+    } catch (err: unknown) {
+      setConfig(prev);
+      message.error('保存顺序失败：' + errMsg(err));
+    }
+  };
+
   const columns: ColumnsType<RowItem> = [
+    {
+      title: '',
+      key: 'drag',
+      width: 32,
+      render: () => <HolderOutlined style={{ color: '#bbb', cursor: 'grab' }} />,
+    },
     {
       title: '公共主机名',
       key: 'hostname',
@@ -209,6 +242,17 @@ export default function PublicHostnamesTab({ aid, tid }: Props) {
         dataSource={rows}
         loading={loading}
         pagination={false}
+        onRow={(_, index) => ({
+          draggable: true,
+          onDragStart: () => setDragIdx(index ?? null),
+          onDragEnd: () => { setDragIdx(null); setOverIdx(null); },
+          onDragOver: (e) => { e.preventDefault(); if (index != null && overIdx !== index) setOverIdx(index); },
+          onDrop: (e) => { e.preventDefault(); if (index != null) handleRowDrop(index); },
+          style: {
+            cursor: 'move',
+            background: overIdx === index && dragIdx !== index ? 'rgba(24,144,255,0.10)' : undefined,
+          },
+        })}
         locale={{
           emptyText: (
             <Empty
