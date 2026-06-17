@@ -20,7 +20,7 @@ import (
 	"github.com/mia-clark/cloudflared-manager/pkg/cfdconfig"
 )
 
-// 子进程模型下每个 frps 实例写各自的 <id>.log，不再有合并日志/前缀。
+// 子进程模型下每个 cloudflared 实例写各自的 <id>.log，不再有合并日志/前缀。
 // 这些测试验证：每个实例只读到自己文件里的行，以及 LogViewSince 水位逻辑。
 
 // TestLogsQuery_ReadsOwnFile: GET /api/v1/configs/A/logs 只返回 A.log 的行。

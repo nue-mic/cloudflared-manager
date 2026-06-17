@@ -445,7 +445,7 @@ const Login: React.FC = () => {
             >
               <Text style={{ fontSize: 12, color: token.colorTextTertiary }}>
                 忘了令牌？请在服务器执行{' '}
-                <Tag style={{ marginInlineEnd: 0, fontSize: 11.5 }}>fms info</Tag>
+                <Tag style={{ marginInlineEnd: 0, fontSize: 11.5 }}>cfm info</Tag>
               </Text>
             </div>
           </div>

@@ -1,5 +1,5 @@
 // Package metrics provides time-series storage and a sampler that polls each
-// running frps worker's loopback for traffic/connection metrics, plus a simple
+// running cloudflared worker's metrics endpoint for traffic/connection stats, plus a simple
 // threshold alert engine. Storage is pure-Go SQLite (modernc.org/sqlite), so
 // the single-binary, cgo-free build is preserved.
 package metrics

@@ -534,7 +534,7 @@ func (m *Manager) SetLogViewSince(id string, unixMilli int64) error {
 
 // instanceLog is a lazily-opened, mutex-guarded append writer for one
 // instance's worker output. Open errors are swallowed so they never break
-// the frps child's stdio pipe.
+// the worker child's stdio pipe.
 type instanceLog struct {
 	path string
 	mu   sync.Mutex

@@ -31,7 +31,7 @@ func NewLogsHandler(m *manager.Manager, logsDir string, log *slog.Logger, origin
 }
 
 // logInstancePath 返回单个实例的独立日志文件绝对路径。子进程模型下，每个
-// frps worker 的 stdout/stderr 写入各自的 <id>.log，无需再按前缀过滤。
+// cloudflared worker 的 stdout/stderr 写入各自的 <id>.log，无需再按前缀过滤。
 func (h *LogsHandler) logInstancePath(id string) string {
 	return h.m.LogPath(id)
 }
@@ -67,7 +67,7 @@ func (h *LogsHandler) Query(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Files 列出本实例日志文件 <id>.log 的所有轮转副本。子进程模型下，每个 frps
+// Files 列出本实例日志文件 <id>.log 的所有轮转副本。子进程模型下，每个 cloudflared
 // worker 写各自的日志文件，本接口只列当前实例的归档。
 func (h *LogsHandler) Files(w http.ResponseWriter, r *http.Request) {
 	id := pathID(r)

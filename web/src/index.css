@@ -113,7 +113,7 @@ body {
 /* 时间戳：低调灰 */
 .log-ts { color: #5b6573; margin-right: 8px; }
 
-/* 级别徽章（frpc 风格彩色 pill） */
+/* 级别徽章（彩色 pill） */
 .log-lvl {
   display: inline-block;
   min-width: 46px;
