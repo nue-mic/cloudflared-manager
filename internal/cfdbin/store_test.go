@@ -53,6 +53,34 @@ func TestResolve_AfterActivate(t *testing.T) {
 	}
 }
 
+// TestResolve_RestoresExecBit covers binaries that land in the store without
+// the execute bit (restored backups, manual scp, exec-bit-dropping mounts).
+// Resolve must self-heal so the subsequent spawn does not fail with
+// "fork/exec ...: permission denied".
+func TestResolve_RestoresExecBit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("exec bit is meaningless on Windows")
+	}
+	s := cfdbin.New(t.TempDir())
+	bin := fakeInstall(t, s, "2026.6.0")
+	if err := os.Chmod(bin, 0o644); err != nil { // simulate a non-executable copy
+		t.Fatal(err)
+	}
+	if err := s.Activate("2026.6.0"); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+	if _, err := s.Resolve(""); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	st, err := os.Stat(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode()&0o111 == 0 {
+		t.Errorf("exec bit not restored: mode=%o", st.Mode())
+	}
+}
+
 func TestList_NewestFirst(t *testing.T) {
 	s := cfdbin.New(t.TempDir())
 	for _, v := range []string{"2026.4.1", "2026.5.2", "2025.10.0"} {

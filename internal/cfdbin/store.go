@@ -145,7 +145,26 @@ func (s *Store) Resolve(version string) (string, error) {
 	if st.IsDir() {
 		return "", ErrNotInstalled
 	}
+	ensureExecutable(p, st.Mode())
 	return p, nil
+}
+
+// ensureExecutable best-effort restores the execute bit on a resolved binary
+// when it is missing. Binaries that land in the store via a path other than
+// Install — restored backups, manual scp, third-party copies, or a filesystem
+// that drops the exec bit (SMB/9p/vfat mounts, or a tarball unpacked without
+// preserving mode) — otherwise fail to spawn with
+// "fork/exec ...: permission denied". Self-heals at the single chokepoint every
+// runnable path flows through. No-op on Windows (exec bit is meaningless there)
+// and silent on error: the subsequent spawn will surface any real problem.
+func ensureExecutable(path string, mode os.FileMode) {
+	if runtime.GOOS == "windows" {
+		return
+	}
+	if mode&0o111 != 0 {
+		return
+	}
+	_ = os.Chmod(path, mode|0o111)
 }
 
 // ActiveVersion returns the version tag recorded in active.json, or "" when
