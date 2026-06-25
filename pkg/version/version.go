@@ -4,7 +4,7 @@ package version
 // .goreleaser.yml and deploy/Dockerfile). Defaults are placeholders so
 // `go run` works during development.
 var (
-	Number = "0.0.32"
+	Number = "0.0.33"
 	// BuildDate is the day that this program was built
 	BuildDate = "unknown"
 )
