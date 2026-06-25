@@ -6,7 +6,7 @@
 |---|---|
 | [`Dockerfile`](Dockerfile) | 三阶段构建（web build → go build → alpine runtime），产物是单二进制 `cfdmgrd` |
 | [`docker-compose.yml`](docker-compose.yml) | 仓库本地构建 + 跑（开发/调试） |
-| [`docker-compose.standalone.yml`](docker-compose.standalone.yml) | 直接拉 `ghcr.io/mia-clark/cloudflared-manager:<tag>` 镜像（生产推荐） |
+| [`docker-compose.standalone.yml`](docker-compose.standalone.yml) | 直接拉 `ghcr.io/nue-mic/cloudflared-manager:<tag>` 镜像（生产推荐） |
 | [`.env.example`](.env.example) | 环境变量模板（含 `CFDM_API_TOKEN` 等） |
 | [`entrypoint.sh`](entrypoint.sh) | 容器入口脚本（设置数据目录权限 + 启动 cfdmgrd） |
 
@@ -43,7 +43,7 @@ docker compose -f docker-compose.standalone.yml up -d
 docker compose -f docker-compose.standalone.yml logs -f
 ```
 
-镜像位置：`ghcr.io/mia-clark/cloudflared-manager:<tag>`（amd64 + arm64 多架构），每个发布 tag 自动构建推送。
+镜像位置：`ghcr.io/nue-mic/cloudflared-manager:<tag>`（amd64 + arm64 多架构），每个发布 tag 自动构建推送。
 
 ---
 
