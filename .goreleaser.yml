@@ -86,7 +86,7 @@ release:
   prerelease: auto
   mode: replace
   github:
-    owner: mia-clark
+    owner: nue-mic
     name: cloudflared-manager
   # OpenWrt 单 all 架构 ipk（壳子包，不含二进制）由 release.yml 在 goreleaser 前用
   # openwrt/build-ipk.sh 生成到 openwrt-dist/（dist/ 之外，--clean 不清它），这里随
@@ -96,8 +96,8 @@ release:
   header: |
     ## cfdmgrd {{ .Tag }}
 
-    Built from [`{{ .ShortCommit }}`](https://github.com/mia-clark/cloudflared-manager/commit/{{ .FullCommit }}).
+    Built from [`{{ .ShortCommit }}`](https://github.com/nue-mic/cloudflared-manager/commit/{{ .FullCommit }}).
   footer: |
     ---
 
-    Container image: `ghcr.io/mia-clark/cloudflared-manager:{{ .Version }}`
+    Container image: `ghcr.io/nue-mic/cloudflared-manager:{{ .Version }}`
