@@ -1,7 +1,7 @@
 
 services:
   cfdmgrd:
-    image: ghcr.io/mia-clark/cloudflared-manager:${CFDM_IMAGE_TAG:-latest}
+    image: ghcr.io/nue-mic/cloudflared-manager:${CFDM_IMAGE_TAG:-latest}
     container_name: docker_cfdmgrd
     restart: always
     network_mode: host
