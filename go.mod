@@ -1,4 +1,4 @@
-module github.com/mia-clark/cloudflared-manager
+module github.com/nue-mic/cloudflared-manager
 
 go 1.25.0
 

@@ -3,7 +3,7 @@ package cfdbin_test
 import (
 	"testing"
 
-	"github.com/mia-clark/cloudflared-manager/internal/cfdbin"
+	"github.com/nue-mic/cloudflared-manager/internal/cfdbin"
 )
 
 const sampleReleaseBody = `Some intro text.

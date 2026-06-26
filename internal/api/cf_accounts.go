@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/mia-clark/cloudflared-manager/internal/cfaccount"
-	"github.com/mia-clark/cloudflared-manager/internal/cfapi"
+	"github.com/nue-mic/cloudflared-manager/internal/cfaccount"
+	"github.com/nue-mic/cloudflared-manager/internal/cfapi"
 )
 
 // accountReq is the body for creating/updating a Cloudflare account. Empty

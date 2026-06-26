@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mia-clark/cloudflared-manager/internal/cfdbin"
-	"github.com/mia-clark/cloudflared-manager/internal/eventbus"
+	"github.com/nue-mic/cloudflared-manager/internal/cfdbin"
+	"github.com/nue-mic/cloudflared-manager/internal/eventbus"
 )
 
 // ErrBusy is returned by CheckAndApply when another update operation already

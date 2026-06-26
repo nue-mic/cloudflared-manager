@@ -7,7 +7,7 @@
 #   功能: 自动识别架构 -> 下载二进制 -> 安装 -> 注册服务 -> 开机自启 -> 健康检查
 #
 # 一行安装 (推荐, 管理员 PowerShell 中执行):
-#   irm https://raw.githubusercontent.com/mia-clark/cloudflared-manager/main/scripts/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/nue-mic/cloudflared-manager/main/scripts/install.ps1 | iex
 #
 # 非交互 / 自定义示例 (先把脚本下到本地):
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Yes -Port 9000 -Token mysecret
@@ -39,7 +39,7 @@ $ErrorActionPreference = 'Stop'
 # ----------------------------------------------------------------------------
 # 常量配置
 # ----------------------------------------------------------------------------
-$Repo         = 'mia-clark/cloudflared-manager'
+$Repo         = 'nue-mic/cloudflared-manager'
 $BinName      = 'cfdmgrd.exe'
 $ServiceName  = 'cfdmgrd'
 $DisplayName  = 'cfdmgrd - cloudflared multi-instance manager'

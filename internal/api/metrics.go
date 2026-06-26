@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/mia-clark/cloudflared-manager/internal/metrics"
+	"github.com/nue-mic/cloudflared-manager/internal/metrics"
 )
 
 // MetricsHandler serves /api/v1/metrics/* (history traffic) and /api/v1/alerts/*

@@ -16,8 +16,8 @@ import (
 	"github.com/coder/websocket"
 	"github.com/go-chi/chi/v5"
 
-	"github.com/mia-clark/cloudflared-manager/internal/manager"
-	"github.com/mia-clark/cloudflared-manager/pkg/cfdconfig"
+	"github.com/nue-mic/cloudflared-manager/internal/manager"
+	"github.com/nue-mic/cloudflared-manager/pkg/cfdconfig"
 )
 
 // 子进程模型下每个 cloudflared 实例写各自的 <id>.log，不再有合并日志/前缀。

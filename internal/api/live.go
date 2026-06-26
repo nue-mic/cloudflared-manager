@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mia-clark/cloudflared-manager/internal/manager"
-	"github.com/mia-clark/cloudflared-manager/internal/metrics"
+	"github.com/nue-mic/cloudflared-manager/internal/manager"
+	"github.com/nue-mic/cloudflared-manager/internal/metrics"
 )
 
 // LiveHandler serves GET /api/v1/configs/{id}/live — an on-demand scrape of a

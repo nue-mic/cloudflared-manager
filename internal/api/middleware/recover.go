@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"runtime/debug"
 
-	"github.com/mia-clark/cloudflared-manager/internal/api/apiresp"
+	"github.com/nue-mic/cloudflared-manager/internal/api/apiresp"
 )
 
 // Recover turns panics inside handlers into 500 responses instead of

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mia-clark/cloudflared-manager/internal/eventbus"
-	"github.com/mia-clark/cloudflared-manager/internal/metrics"
+	"github.com/nue-mic/cloudflared-manager/internal/eventbus"
+	"github.com/nue-mic/cloudflared-manager/internal/metrics"
 )
 
 type mockSrc struct {

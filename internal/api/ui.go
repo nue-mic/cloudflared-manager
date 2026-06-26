@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/mia-clark/cloudflared-manager/internal/manager"
+	"github.com/nue-mic/cloudflared-manager/internal/manager"
 )
 
 // UIHandler serves the operator-customizable UI branding (brand name +

@@ -19,7 +19,7 @@
 
 set -eu
 
-REPO="${REPO:-mia-clark/frps-manager}"
+REPO="${REPO:-nue-mic/frps-manager}"
 BIN_NAME="${BIN_NAME:-frpsmgrd}"           # 资产前缀, 用于 HEAD fallback 探测
 API="https://api.github.com/repos/${REPO}"
 WEB="https://github.com/${REPO}"
@@ -243,7 +243,7 @@ release-status —— frpc-manager 全模块发布状态查询
   bash check.sh              # 快照: 列 CI runs + tags + Docker
   bash check.sh wait [TAG]   # 定时跟踪 (默认最新 tag), 30s/次, 上限 15 分钟
 环境变量:
-  REPO              默认 mia-clark/frpc-manager
+  REPO              默认 nue-mic/frpc-manager
   EXPECTED_ASSETS   release 期望资产数, 默认 19
 EOF
         ;;

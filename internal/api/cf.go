@@ -10,9 +10,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/mia-clark/cloudflared-manager/internal/cfaccount"
-	"github.com/mia-clark/cloudflared-manager/internal/cfapi"
-	"github.com/mia-clark/cloudflared-manager/internal/manager"
+	"github.com/nue-mic/cloudflared-manager/internal/cfaccount"
+	"github.com/nue-mic/cloudflared-manager/internal/cfapi"
+	"github.com/nue-mic/cloudflared-manager/internal/manager"
 )
 
 // CFHandler serves the Cloudflare-account integration endpoints: account CRUD

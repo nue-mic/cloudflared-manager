@@ -14,16 +14,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mia-clark/cloudflared-manager/internal/api"
-	"github.com/mia-clark/cloudflared-manager/internal/appcfg"
-	"github.com/mia-clark/cloudflared-manager/internal/cfaccount"
-	"github.com/mia-clark/cloudflared-manager/internal/cfdbin"
-	"github.com/mia-clark/cloudflared-manager/internal/cfdupdate"
-	"github.com/mia-clark/cloudflared-manager/internal/eventbus"
-	"github.com/mia-clark/cloudflared-manager/internal/manager"
-	"github.com/mia-clark/cloudflared-manager/internal/metrics"
-	"github.com/mia-clark/cloudflared-manager/internal/process"
-	"github.com/mia-clark/cloudflared-manager/pkg/version"
+	"github.com/nue-mic/cloudflared-manager/internal/api"
+	"github.com/nue-mic/cloudflared-manager/internal/appcfg"
+	"github.com/nue-mic/cloudflared-manager/internal/cfaccount"
+	"github.com/nue-mic/cloudflared-manager/internal/cfdbin"
+	"github.com/nue-mic/cloudflared-manager/internal/cfdupdate"
+	"github.com/nue-mic/cloudflared-manager/internal/eventbus"
+	"github.com/nue-mic/cloudflared-manager/internal/manager"
+	"github.com/nue-mic/cloudflared-manager/internal/metrics"
+	"github.com/nue-mic/cloudflared-manager/internal/process"
+	"github.com/nue-mic/cloudflared-manager/pkg/version"
 )
 
 func main() {

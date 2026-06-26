@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mia-clark/cloudflared-manager/internal/process"
+	"github.com/nue-mic/cloudflared-manager/internal/process"
 )
 
 // safeBuffer is a bytes.Buffer guarded by a mutex so the test goroutine

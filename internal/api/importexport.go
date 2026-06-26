@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mia-clark/cloudflared-manager/internal/manager"
-	"github.com/mia-clark/cloudflared-manager/pkg/cfdconfig"
+	"github.com/nue-mic/cloudflared-manager/internal/manager"
+	"github.com/nue-mic/cloudflared-manager/pkg/cfdconfig"
 )
 
 // ImportExportHandler implements /api/v1/import/* and /api/v1/export/*.

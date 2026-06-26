@@ -311,7 +311,7 @@ const Login: React.FC = () => {
               }}
             >
               <ATypoLink
-                href="https://github.com/mia-clark/cloudflared-manager"
+                href="https://github.com/nue-mic/cloudflared-manager"
                 target="_blank"
                 style={{ color: 'rgba(255,255,255,0.6)' }}
               >

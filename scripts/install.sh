@@ -7,8 +7,8 @@
 #   功能: 自动识别系统架构 -> 下载对应二进制 -> 安装 -> 注册系统服务 -> 开机自启
 #
 # 一行安装 (推荐, 支持交互):
-#   sh -c "$(curl -fsSL https://raw.githubusercontent.com/mia-clark/cloudflared-manager/main/scripts/install.sh)"
-#   sh -c "$(wget -qO- https://raw.githubusercontent.com/mia-clark/cloudflared-manager/main/scripts/install.sh)"
+#   sh -c "$(curl -fsSL https://raw.githubusercontent.com/nue-mic/cloudflared-manager/main/scripts/install.sh)"
+#   sh -c "$(wget -qO- https://raw.githubusercontent.com/nue-mic/cloudflared-manager/main/scripts/install.sh)"
 #
 # 非交互 / 自定义示例:
 #   sh install.sh --yes --port 9000 --token mysecret
@@ -24,7 +24,7 @@ set -eu
 # ----------------------------------------------------------------------------
 # 常量配置
 # ----------------------------------------------------------------------------
-REPO="mia-clark/cloudflared-manager"
+REPO="nue-mic/cloudflared-manager"
 BIN_NAME="cfdmgrd"
 INSTALL_DIR="/usr/local/bin"
 SERVICE_NAME="cfdmgrd"

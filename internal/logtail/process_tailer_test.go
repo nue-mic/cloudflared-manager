@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mia-clark/cloudflared-manager/internal/logtail"
+	"github.com/nue-mic/cloudflared-manager/internal/logtail"
 )
 
 func TestParse_JSON_HappyPath(t *testing.T) {

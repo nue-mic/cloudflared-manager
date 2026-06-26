@@ -3,7 +3,7 @@ package cfdflags_test
 import (
 	"testing"
 
-	"github.com/mia-clark/cloudflared-manager/pkg/cfdflags"
+	"github.com/nue-mic/cloudflared-manager/pkg/cfdflags"
 )
 
 func TestAll_Count(t *testing.T) {

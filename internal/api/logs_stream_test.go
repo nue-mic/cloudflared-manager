@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/mia-clark/cloudflared-manager/internal/logtail"
+	"github.com/nue-mic/cloudflared-manager/internal/logtail"
 )
 
 // The WS /logs/stream contract is one JSON frame {"entries":[Entry,...]} with

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mia-clark/cloudflared-manager/pkg/cfdconfig"
+	"github.com/nue-mic/cloudflared-manager/pkg/cfdconfig"
 )
 
 func TestProjectEnv_MapsConfigAndOmitsToken(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mia-clark/cloudflared-manager/internal/cfaccount"
-	"github.com/mia-clark/cloudflared-manager/internal/cfapi"
+	"github.com/nue-mic/cloudflared-manager/internal/cfaccount"
+	"github.com/nue-mic/cloudflared-manager/internal/cfapi"
 )
 
 // cfargoSuffix is appended to a tunnel id to form the proxied CNAME target a

@@ -4,8 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/mia-clark/cloudflared-manager/internal/selfupdate"
-	"github.com/mia-clark/cloudflared-manager/pkg/version"
+	"github.com/nue-mic/cloudflared-manager/internal/selfupdate"
+	"github.com/nue-mic/cloudflared-manager/pkg/version"
 )
 
 // UpdateHandler serves the version-check and self-update endpoints:

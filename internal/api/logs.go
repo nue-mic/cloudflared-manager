@@ -11,10 +11,10 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/mia-clark/cloudflared-manager/internal/api/middleware"
-	"github.com/mia-clark/cloudflared-manager/internal/logtail"
-	"github.com/mia-clark/cloudflared-manager/internal/manager"
-	"github.com/mia-clark/cloudflared-manager/pkg/util"
+	"github.com/nue-mic/cloudflared-manager/internal/api/middleware"
+	"github.com/nue-mic/cloudflared-manager/internal/logtail"
+	"github.com/nue-mic/cloudflared-manager/internal/manager"
+	"github.com/nue-mic/cloudflared-manager/pkg/util"
 )
 
 // LogsHandler serves /api/v1/configs/{id}/logs*.

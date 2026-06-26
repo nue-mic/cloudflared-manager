@@ -16,8 +16,8 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X github.com/mia-clark/cloudflared-manager/pkg/version.Number={{.Version}}
-      - -X github.com/mia-clark/cloudflared-manager/pkg/version.BuildDate={{.Date}}
+      - -X github.com/nue-mic/cloudflared-manager/pkg/version.Number={{.Version}}
+      - -X github.com/nue-mic/cloudflared-manager/pkg/version.BuildDate={{.Date}}
     # 显式目标清单。modernc.org/sqlite 依赖的 modernc.org/libc 不为 mips/mipsle/
     # mips64/mips64le/loong64 提供 platform-specific 源文件 (undefined: newFile/long
     # /ulong)，这些目标会编译失败，故移除。riscv64 由 modernc/libc v1.61+ 支持。

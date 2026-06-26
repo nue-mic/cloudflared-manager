@@ -54,13 +54,13 @@ bash .claude/skills/release-status/check.sh wait v1.2.X     # 指定 tag
 
 | 变量 | 默认 | 用途 |
 |---|---|---|
-| `REPO` | `mia-clark/frps-manager` | 改成跨仓库（如查姊妹 `frpc-manager`） |
+| `REPO` | `nue-mic/frps-manager` | 改成跨仓库（如查姊妹 `frpc-manager`） |
 | `BIN_NAME` | `frpsmgrd` | 资产前缀；HEAD fallback 时用，跨仓库查时必须改 |
 | `EXPECTED_ASSETS` | `14` | release 期望资产数（13 平台 tar.gz/zip + checksums.txt；frpc-manager 是 19） |
 
 示例 — 反向查姊妹仓库 frpc-manager：
 ```bash
-REPO=mia-clark/frpc-manager BIN_NAME=frpcmgrd bash .claude/skills/release-status/check.sh
+REPO=nue-mic/frpc-manager BIN_NAME=frpcmgrd bash .claude/skills/release-status/check.sh
 ```
 
 ## 设计要点（脚本内已实现，别绕过去）

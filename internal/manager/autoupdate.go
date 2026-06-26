@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mia-clark/cloudflared-manager/pkg/cfdconfig"
-	"github.com/mia-clark/cloudflared-manager/pkg/cfdstate"
+	"github.com/nue-mic/cloudflared-manager/pkg/cfdconfig"
+	"github.com/nue-mic/cloudflared-manager/pkg/cfdstate"
 )
 
 // AutoUpdate returns the persisted cloudflared binary auto-update config and

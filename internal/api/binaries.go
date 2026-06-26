@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/mia-clark/cloudflared-manager/internal/cfdbin"
+	"github.com/nue-mic/cloudflared-manager/internal/cfdbin"
 )
 
 // versionParamRE guards the {version} path param (and install body) against

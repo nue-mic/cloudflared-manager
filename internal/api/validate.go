@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/mia-clark/cloudflared-manager/pkg/cfdconfig"
-	"github.com/mia-clark/cloudflared-manager/pkg/cfdflags"
+	"github.com/nue-mic/cloudflared-manager/pkg/cfdconfig"
+	"github.com/nue-mic/cloudflared-manager/pkg/cfdflags"
 )
 
 // ValidateHandler serves POST /api/v1/validate. It accepts either JSON

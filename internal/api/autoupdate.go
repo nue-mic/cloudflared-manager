@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/mia-clark/cloudflared-manager/internal/cfdupdate"
+	"github.com/nue-mic/cloudflared-manager/internal/cfdupdate"
 )
 
 // AutoUpdateHandler exposes the cloudflared binary auto-update endpoints:

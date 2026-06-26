@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mia-clark/cloudflared-manager/internal/eventbus"
+	"github.com/nue-mic/cloudflared-manager/internal/eventbus"
 )
 
 // InstanceSource is the subset of the Manager the sampler needs.

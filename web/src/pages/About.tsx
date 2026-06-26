@@ -42,18 +42,18 @@ interface VersionResp {
   build_date?: string;
 }
 
-const APP_REPO = 'https://github.com/mia-clark/cloudflared-manager';
+const APP_REPO = 'https://github.com/nue-mic/cloudflared-manager';
 const UPSTREAM_CFD_REPO = 'https://github.com/cloudflare/cloudflared';
 const ZERO_TRUST_DASH = 'https://one.dash.cloudflare.com/';
-const APP_RELEASES = 'https://github.com/mia-clark/cloudflared-manager/releases';
-const APP_ISSUES = 'https://github.com/mia-clark/cloudflared-manager/issues';
+const APP_RELEASES = 'https://github.com/nue-mic/cloudflared-manager/releases';
+const APP_ISSUES = 'https://github.com/nue-mic/cloudflared-manager/issues';
 const APP_DOCS_PATH = '/api/docs/';
 
 // 国内加速：自建 gh-raw 代理，安装脚本配置键 (key) = cfd-mgr
 const INSTALL_URL_CN = 'https://gh-raw.966788.xyz/cfd-mgr/install.sh';
 const INSTALL_URL_PS1_CN = 'https://gh-raw.966788.xyz/cfd-mgr/install.ps1';
-const INSTALL_URL_GH = 'https://raw.githubusercontent.com/mia-clark/cloudflared-manager/main/scripts/install.sh';
-const DOCKER_IMAGE = 'ghcr.io/mia-clark/cloudflared-manager:latest';
+const INSTALL_URL_GH = 'https://raw.githubusercontent.com/nue-mic/cloudflared-manager/main/scripts/install.sh';
+const DOCKER_IMAGE = 'ghcr.io/nue-mic/cloudflared-manager:latest';
 
 const About: React.FC = () => {
   const { token } = antdTheme.useToken();
@@ -286,7 +286,7 @@ function renderInfoTab(opts: { token: TokenLike; version: VersionResp }) {
       <SectionTitle icon={<LinkOutlined />}>相关链接</SectionTitle>
       <Space wrap size={[8, 8]}>
         <Button icon={<GithubOutlined />} href={APP_REPO} target="_blank" rel="noopener noreferrer" type="primary">
-          本项目 · mia-clark/cloudflared-manager
+          本项目 · nue-mic/cloudflared-manager
         </Button>
         <Button icon={<CloudOutlined />} href={ZERO_TRUST_DASH} target="_blank" rel="noopener noreferrer">
           Cloudflare Zero Trust 控制台
@@ -346,7 +346,7 @@ function renderInstallTab(opts: { token: TokenLike; copyText: (s: string) => voi
   const cnUninstall = `curl -fsSL ${INSTALL_URL_CN} | sh -s -- --uninstall`;
   const linuxFull = `curl -fsSL ${INSTALL_URL_CN} | sh -s -- -y -p 9000 -t 我的强随机令牌`;
   const manualBin = `# 1. 到 Releases 下载对应平台压缩包
-curl -LO https://github.com/mia-clark/cloudflared-manager/releases/latest/download/cfdmgrd_linux_amd64.tar.gz
+curl -LO https://github.com/nue-mic/cloudflared-manager/releases/latest/download/cfdmgrd_linux_amd64.tar.gz
 
 # 2. 解压
 tar -xzf cfdmgrd_linux_amd64.tar.gz
@@ -488,8 +488,8 @@ CFDM_API_TOKEN=change-me-to-a-real-strong-token`;
 
   const standaloneFetch = `# 一行下载现成 compose 与 .env 模板
 mkdir cfdmgrd && cd cfdmgrd
-curl -fsSL https://raw.githubusercontent.com/mia-clark/cloudflared-manager/main/deploy/docker-compose.standalone.yml -o docker-compose.yml
-curl -fsSL https://raw.githubusercontent.com/mia-clark/cloudflared-manager/main/deploy/.env.example -o .env
+curl -fsSL https://raw.githubusercontent.com/nue-mic/cloudflared-manager/main/deploy/docker-compose.standalone.yml -o docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/nue-mic/cloudflared-manager/main/deploy/.env.example -o .env
 
 # 改 .env: 填入 CFDM_API_TOKEN
 docker compose up -d`;

@@ -2,8 +2,8 @@ SHELL := /bin/sh
 VERSION ?= dev
 BUILD_DATE := $(shell date -u +%Y-%m-%d)
 LDFLAGS := -s -w \
-    -X github.com/mia-clark/cloudflared-manager/pkg/version.Number=$(VERSION) \
-    -X github.com/mia-clark/cloudflared-manager/pkg/version.BuildDate=$(BUILD_DATE)
+    -X github.com/nue-mic/cloudflared-manager/pkg/version.Number=$(VERSION) \
+    -X github.com/nue-mic/cloudflared-manager/pkg/version.BuildDate=$(BUILD_DATE)
 
 .PHONY: build build-host web web-install test vet tidy clean docker run
 

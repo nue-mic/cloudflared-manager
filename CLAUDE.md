@@ -165,7 +165,7 @@ Conventional Commits + **中文描述**，与现有历史一致：`feat(scope): 
 
 ## 11. GitHub API / Git 访问令牌（强制）
 
-> ⚠️ 任何需要访问 `github.com/mia-clark/cloudflared-manager` 的 GitHub API（`actions/runs`、`pulls`、`issues`、release 状态、CI 日志等）或拉私有数据时，**必须**先加载本仓 token，不要再去问用户。
+> ⚠️ 任何需要访问 `github.com/nue-mic/cloudflared-manager` 的 GitHub API（`actions/runs`、`pulls`、`issues`、release 状态、CI 日志等）或拉私有数据时，**必须**先加载本仓 token，不要再去问用户。
 
 **优先顺序**（命中即停）：
 
@@ -177,7 +177,7 @@ Conventional Commits + **中文描述**，与现有历史一致：`feat(scope): 
 ```bash
 [ -f .claude.local/github-tokens.env ] && source .claude.local/github-tokens.env
 [ -f "$HOME/.claude/secrets/github-tokens.env" ] && source "$HOME/.claude/secrets/github-tokens.env"
-curl -H "Authorization: Bearer $GH_MIA_CLARK_TOKEN" https://api.github.com/repos/mia-clark/cloudflared-manager/...
+curl -H "Authorization: Bearer $GH_MIA_CLARK_TOKEN" https://api.github.com/repos/nue-mic/cloudflared-manager/...
 ```
 
 **安全红线**：

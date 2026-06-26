@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mia-clark/cloudflared-manager/pkg/cfdconfig"
+	"github.com/nue-mic/cloudflared-manager/pkg/cfdconfig"
 )
 
 // validToken is a base64-ish 100-char string that satisfies the syntax

@@ -13,11 +13,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mia-clark/cloudflared-manager/internal/cfdbin"
-	"github.com/mia-clark/cloudflared-manager/internal/eventbus"
-	"github.com/mia-clark/cloudflared-manager/internal/logtail"
-	"github.com/mia-clark/cloudflared-manager/pkg/cfdconfig"
-	"github.com/mia-clark/cloudflared-manager/pkg/cfdstate"
+	"github.com/nue-mic/cloudflared-manager/internal/cfdbin"
+	"github.com/nue-mic/cloudflared-manager/internal/eventbus"
+	"github.com/nue-mic/cloudflared-manager/internal/logtail"
+	"github.com/nue-mic/cloudflared-manager/pkg/cfdconfig"
+	"github.com/nue-mic/cloudflared-manager/pkg/cfdstate"
 )
 
 // Options configures the Manager.

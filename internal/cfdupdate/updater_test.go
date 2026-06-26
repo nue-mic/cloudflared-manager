@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mia-clark/cloudflared-manager/internal/cfdbin"
+	"github.com/nue-mic/cloudflared-manager/internal/cfdbin"
 )
 
 // ── fakes ───────────────────────────────────────────────────────────────────

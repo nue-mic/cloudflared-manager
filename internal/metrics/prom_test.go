@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mia-clark/cloudflared-manager/internal/metrics"
+	"github.com/nue-mic/cloudflared-manager/internal/metrics"
 )
 
 func TestParsePromText_BareMetric(t *testing.T) {

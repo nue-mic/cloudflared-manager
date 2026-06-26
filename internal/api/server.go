@@ -8,14 +8,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/mia-clark/cloudflared-manager/internal/api/middleware"
-	"github.com/mia-clark/cloudflared-manager/internal/appcfg"
-	"github.com/mia-clark/cloudflared-manager/internal/cfaccount"
-	"github.com/mia-clark/cloudflared-manager/internal/cfdbin"
-	"github.com/mia-clark/cloudflared-manager/internal/cfdupdate"
-	"github.com/mia-clark/cloudflared-manager/internal/manager"
-	"github.com/mia-clark/cloudflared-manager/internal/metrics"
-	"github.com/mia-clark/cloudflared-manager/web"
+	"github.com/nue-mic/cloudflared-manager/internal/api/middleware"
+	"github.com/nue-mic/cloudflared-manager/internal/appcfg"
+	"github.com/nue-mic/cloudflared-manager/internal/cfaccount"
+	"github.com/nue-mic/cloudflared-manager/internal/cfdbin"
+	"github.com/nue-mic/cloudflared-manager/internal/cfdupdate"
+	"github.com/nue-mic/cloudflared-manager/internal/manager"
+	"github.com/nue-mic/cloudflared-manager/internal/metrics"
+	"github.com/nue-mic/cloudflared-manager/web"
 )
 
 // Deps bundles the collaborators that handlers need.

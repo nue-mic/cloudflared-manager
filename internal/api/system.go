@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mia-clark/cloudflared-manager/internal/sysinfo"
-	"github.com/mia-clark/cloudflared-manager/pkg/version"
+	"github.com/nue-mic/cloudflared-manager/internal/sysinfo"
+	"github.com/nue-mic/cloudflared-manager/pkg/version"
 )
 
 // SystemHandler exposes /health, /version and /api/v1/system/*.

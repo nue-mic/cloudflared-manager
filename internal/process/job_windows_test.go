@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"github.com/mia-clark/cloudflared-manager/internal/process"
+	"github.com/nue-mic/cloudflared-manager/internal/process"
 )
 
 // IsProcessInJob isn't exported by golang.org/x/sys/windows; call it

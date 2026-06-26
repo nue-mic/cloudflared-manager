@@ -4,10 +4,10 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/mia-clark/cloudflared-manager/internal/cfdbin"
-	"github.com/mia-clark/cloudflared-manager/internal/manager"
-	"github.com/mia-clark/cloudflared-manager/pkg/cfdconfig"
-	"github.com/mia-clark/cloudflared-manager/pkg/cfdflags"
+	"github.com/nue-mic/cloudflared-manager/internal/cfdbin"
+	"github.com/nue-mic/cloudflared-manager/internal/manager"
+	"github.com/nue-mic/cloudflared-manager/pkg/cfdconfig"
+	"github.com/nue-mic/cloudflared-manager/pkg/cfdflags"
 )
 
 // ProjectionHandler serves GET /api/v1/configs/{id}/projection — the real

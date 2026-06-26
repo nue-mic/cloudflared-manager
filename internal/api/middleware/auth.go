@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/mia-clark/cloudflared-manager/internal/api/apiresp"
+	"github.com/nue-mic/cloudflared-manager/internal/api/apiresp"
 )
 
 // Bearer enforces a static Bearer token on every request. The token may be

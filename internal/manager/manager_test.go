@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mia-clark/cloudflared-manager/internal/eventbus"
-	"github.com/mia-clark/cloudflared-manager/pkg/cfdconfig"
+	"github.com/nue-mic/cloudflared-manager/internal/eventbus"
+	"github.com/nue-mic/cloudflared-manager/pkg/cfdconfig"
 )
 
 func newMgr(t *testing.T) (*Manager, string) {

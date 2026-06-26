@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/mia-clark/cloudflared-manager/internal/cfdbin"
+	"github.com/nue-mic/cloudflared-manager/internal/cfdbin"
 )
 
 // fakeInstall plants a fake binary + meta.json under a version dir so

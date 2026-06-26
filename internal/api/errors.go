@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/mia-clark/cloudflared-manager/internal/api/apiresp"
+	"github.com/nue-mic/cloudflared-manager/internal/api/apiresp"
 )
 
 // Re-exports of the apiresp helpers so handlers in this package can use

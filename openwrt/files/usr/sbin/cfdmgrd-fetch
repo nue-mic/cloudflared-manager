@@ -29,7 +29,7 @@
 # =============================================================================
 set -eu
 
-REPO="mia-clark/cloudflared-manager"
+REPO="nue-mic/cloudflared-manager"
 BIN_NAME="cfdmgrd"
 INSTALL_DIR="/usr/bin"
 LIBDIR="/usr/lib/cfdmgrd"

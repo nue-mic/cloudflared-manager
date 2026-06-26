@@ -3,7 +3,7 @@ package cfdupdate
 import (
 	"context"
 
-	"github.com/mia-clark/cloudflared-manager/internal/cfdbin"
+	"github.com/nue-mic/cloudflared-manager/internal/cfdbin"
 )
 
 // StoreAdapter binds a concrete *cfdbin.Store and *cfdbin.Downloader into the

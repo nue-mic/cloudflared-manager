@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mia-clark/cloudflared-manager/internal/process"
+	"github.com/nue-mic/cloudflared-manager/internal/process"
 )
 
 // TestMain doubles as a controllable "sleeper" subprocess: when invoked

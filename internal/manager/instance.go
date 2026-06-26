@@ -14,14 +14,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mia-clark/cloudflared-manager/internal/cfdbin"
-	"github.com/mia-clark/cloudflared-manager/internal/eventbus"
-	"github.com/mia-clark/cloudflared-manager/internal/logtail"
-	"github.com/mia-clark/cloudflared-manager/internal/process"
-	"github.com/mia-clark/cloudflared-manager/pkg/cfdconfig"
-	"github.com/mia-clark/cloudflared-manager/pkg/cfdflags"
-	"github.com/mia-clark/cloudflared-manager/pkg/cfdstate"
-	"github.com/mia-clark/cloudflared-manager/pkg/util"
+	"github.com/nue-mic/cloudflared-manager/internal/cfdbin"
+	"github.com/nue-mic/cloudflared-manager/internal/eventbus"
+	"github.com/nue-mic/cloudflared-manager/internal/logtail"
+	"github.com/nue-mic/cloudflared-manager/internal/process"
+	"github.com/nue-mic/cloudflared-manager/pkg/cfdconfig"
+	"github.com/nue-mic/cloudflared-manager/pkg/cfdflags"
+	"github.com/nue-mic/cloudflared-manager/pkg/cfdstate"
+	"github.com/nue-mic/cloudflared-manager/pkg/util"
 )
 
 // instance owns a single cloudflared connector lifecycle. Each running

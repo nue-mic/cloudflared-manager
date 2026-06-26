@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/mia-clark/cloudflared-manager/internal/manager"
+	"github.com/nue-mic/cloudflared-manager/internal/manager"
 )
 
 // pathID returns the chi URL param "id" or empty string.

@@ -24,9 +24,9 @@ import (
 )
 
 const (
-	defaultRepo       = "mia-clark/cloudflared-manager"
-	defaultInstallSh  = "https://raw.githubusercontent.com/mia-clark/cloudflared-manager/main/scripts/install.sh"
-	defaultInstallPs1 = "https://raw.githubusercontent.com/mia-clark/cloudflared-manager/main/scripts/install.ps1"
+	defaultRepo       = "nue-mic/cloudflared-manager"
+	defaultInstallSh  = "https://raw.githubusercontent.com/nue-mic/cloudflared-manager/main/scripts/install.sh"
+	defaultInstallPs1 = "https://raw.githubusercontent.com/nue-mic/cloudflared-manager/main/scripts/install.ps1"
 	// defaultSelfUpdateKey is the self-hosted Release-proxy key for the
 	// MANAGER's own releases (the "check for update" path). The install
 	// scripts use a separate key (cfd-mgr) for the binary download.
@@ -59,7 +59,7 @@ type Release struct {
 
 // Config configures an Updater.
 type Config struct {
-	// Repo is the "owner/name" GitHub repo. Defaults to mia-clark/cloudflared-manager.
+	// Repo is the "owner/name" GitHub repo. Defaults to nue-mic/cloudflared-manager.
 	Repo string
 	// InstallShURL / InstallPs1URL point at the installer scripts the spawned
 	// updater downloads. Empty values fall back to the official raw URLs,
